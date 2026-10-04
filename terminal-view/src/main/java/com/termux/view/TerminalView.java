@@ -40,6 +40,7 @@ import androidx.annotation.RequiresApi;
 
 import com.termux.terminal.KeyHandler;
 import com.termux.terminal.RegionScrollAnimation;
+import com.termux.terminal.RepaintScrollDetector;
 import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
@@ -99,6 +100,12 @@ public final class TerminalView extends View {
 
     /** If native scrollback is dragged and flung by pixels instead of whole rows. */
     boolean mSmoothScrollEnabled = true;
+    /** If a fling an app scrolls sends its wheel events (or arrow keys) at the fling's rate, else in a burst as stock. */
+    boolean mAppFlingEnabled = true;
+    /** If scroll commands an app sends during a scroll gesture (scroll regions, IL/DL) glide. */
+    boolean mAppRegionScrollsEnabled = true;
+    /** If scrolls an app performs by redrawing during a scroll gesture (Claude Code) are detected and glide. */
+    boolean mAppRepaintScrollsEnabled = true;
     /** How long a stepped scroll (mouse wheel, shift+page up/down) glides for, in ms. 0 jumps. */
     int mScrollAnimationDuration = DEFAULT_SCROLL_ANIMATION_DURATION;
 
@@ -136,6 +143,40 @@ public final class TerminalView extends View {
         @Override
         public void run() {
             mRegionScrollAnimation.setRecording(false);
+            if (!mRepaintCheckPending) mRepaintScrollDetector.clear();
+        }
+    };
+
+    /**
+     * Finds the scrolls an app performs by redrawing the screen. It holds a copy of the screen
+     * while a scroll gesture is recent, see {@link #checkForRepaintScroll()}.
+     */
+    final RepaintScrollDetector mRepaintScrollDetector = new RepaintScrollDetector();
+    /** Positive if the last scroll sent to the app was towards the end (content moves up), negative if towards the start. */
+    int mAppScrollDirection;
+    /** {@link RegionScrollAnimation#getScrollEventCount()} when the detector's copy was made. */
+    long mRepaintDetectorScrollEventCount;
+    /** When the app last sent a scroll command. The detector stays off for a while after, see {@link #REPAINT_QUIET_AFTER_SCROLL_EVENT_MS}. */
+    long mLastAppScrollEventTime;
+    /**
+     * An app that sends scroll commands is left to them for this long, so that the detector never
+     * counts a scroll a second time (nvim, tmux). An app that only redraws never sends one.
+     */
+    static final int REPAINT_QUIET_AFTER_SCROLL_EVENT_MS = 1000;
+    /**
+     * Output while a scroll gesture is recent is compared once it pauses for this long, so that a
+     * redraw that arrives in several pieces is compared whole. The frame is not drawn meanwhile,
+     * so a half-drawn redraw is never shown without its offset.
+     */
+    static final int REPAINT_SETTLE_MS = 12;
+    /** The longest the drawing is held back waiting for output to pause, if it keeps streaming. */
+    static final int REPAINT_MAX_HOLD_MS = 48;
+    boolean mRepaintCheckPending;
+    long mRepaintCheckFirstPendingTime;
+    private final Runnable mRepaintCheck = new Runnable() {
+        @Override
+        public void run() {
+            checkForRepaintScroll();
         }
     };
 
@@ -267,7 +308,7 @@ public final class TerminalView extends View {
             @Override
             public boolean onFling(final MotionEvent e2, float velocityX, float velocityY) {
                 if (mEmulator == null) return true;
-                if (mSmoothScrollEnabled) {
+                if (isScrollHandledByApp() ? mAppFlingEnabled : mSmoothScrollEnabled) {
                     startSmoothFling(e2, velocityY);
                     return true;
                 }
@@ -583,8 +624,63 @@ public final class TerminalView extends View {
             else scheduleScrollAnimationFrame();
         }
 
-        invalidate();
+        final long now = SystemClock.uptimeMillis();
+        final long scrollEvents = mRegionScrollAnimation.getScrollEventCount();
+        if (scrollEvents != mRepaintDetectorScrollEventCount) {
+            mRepaintDetectorScrollEventCount = scrollEvents;
+            mLastAppScrollEventTime = now;
+        }
+        if (mRepaintScrollDetector.hasSnapshot() && mRegionScrollAnimation.isRecording()
+            && now - mLastAppScrollEventTime < REPAINT_QUIET_AFTER_SCROLL_EVENT_MS) {
+            // The app sends scroll commands (nvim, tmux), which animate on their own: draw as
+            // usual, and keep the copy current in case it starts redrawing instead.
+            if (!mRepaintCheckPending) mRepaintScrollDetector.snapshot(mEmulator.getScreen());
+            invalidate();
+        } else if (mRepaintScrollDetector.hasSnapshot() && mRegionScrollAnimation.isRecording()) {
+            // Compare once the output pauses; checkForRepaintScroll() draws the frame.
+            if (!mRepaintCheckPending) {
+                mRepaintCheckPending = true;
+                mRepaintCheckFirstPendingTime = now;
+                postDelayed(mRepaintCheck, REPAINT_SETTLE_MS);
+            } else if (now - mRepaintCheckFirstPendingTime < REPAINT_MAX_HOLD_MS) {
+                removeCallbacks(mRepaintCheck);
+                postDelayed(mRepaintCheck, REPAINT_SETTLE_MS);
+            }
+        } else {
+            invalidate();
+        }
         if (mAccessibilityEnabled) setContentDescription(getText());
+    }
+
+    /**
+     * Compare the screen with the copy taken before the app's last output, and if the app moved
+     * its content by redrawing it, animate that like a scroll command. Then take a new copy.
+     */
+    void checkForRepaintScroll() {
+        mRepaintCheckPending = false;
+        removeCallbacks(mRepaintCheck);
+        if (mEmulator != null && mRegionScrollAnimationEmulator == mEmulator && mRepaintScrollDetector.hasSnapshot()) {
+            final long now = SystemClock.uptimeMillis();
+            final long scrollEvents = mRegionScrollAnimation.getScrollEventCount();
+            if (scrollEvents != mRepaintDetectorScrollEventCount) {
+                // The app sends scroll commands, which animate (or not) on their own.
+                mRepaintDetectorScrollEventCount = scrollEvents;
+                mLastAppScrollEventTime = now;
+            } else if (now - mLastAppScrollEventTime >= REPAINT_QUIET_AFTER_SCROLL_EVENT_MS
+                && mRegionScrollAnimation.isRecording() && mTopRow == 0 && mTopRowPixelOffset == 0) {
+                final int rows = mRepaintScrollDetector.detect(mEmulator.getScreen(), mAppScrollDirection);
+                if (rows != 0) {
+                    mRegionScrollAnimation.onRegionRepainted(mEmulator.getScreen(), mRepaintScrollDetector.getSnapshotRows(),
+                        rows, mRepaintScrollDetector.getTop(), mRepaintScrollDetector.getBottom(), 0, mEmulator.mColumns);
+                    if (mRegionScrollAnimation.isActive()) scheduleScrollAnimationFrame();
+                }
+            }
+            if (mRegionScrollAnimation.isRecording()) mRepaintScrollDetector.snapshot(mEmulator.getScreen());
+            else mRepaintScrollDetector.clear();
+        } else {
+            mRepaintScrollDetector.clear();
+        }
+        invalidate();
     }
 
     /** This must be called by the hosting activity in {@link Activity#onContextMenuClosed(Menu)}
@@ -667,7 +763,7 @@ public final class TerminalView extends View {
             glideNativeByRows(rowsDown);
             return;
         }
-        if (rowsDown != 0 && isScrollHandledByApp()) recordRegionScrolls();
+        if (rowsDown != 0 && isScrollHandledByApp()) recordRegionScrolls(rowsDown);
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
         for (int i = 0; i < amount; i++) {
@@ -1200,7 +1296,27 @@ public final class TerminalView extends View {
         mScrollAnimationDuration = Math.max(0, Math.min(animationDuration, MAX_SCROLL_ANIMATION_DURATION));
         if (!enabled) snapToRowGrid();
         // 0 turns the app scroll animation off, without dividing by it anywhere.
-        mRegionScrollAnimation.setDuration(enabled ? mScrollAnimationDuration : 0);
+        mRegionScrollAnimation.setDuration(mScrollAnimationDuration);
+        attachRegionScrollAnimation();
+        invalidate();
+    }
+
+    /**
+     * Set how scrolling an app that handles scrolling itself (tmux, nvim, less, Claude Code) behaves.
+     * The glides take {@link #setSmoothScrolling}'s animation duration, and 0 turns them off.
+     *
+     * @param steadyFling If a fling sends its wheel events (or arrow keys) at the fling's rate,
+     *                    instead of in a burst.
+     * @param regionScrolls If scroll commands the app sends in response glide.
+     * @param repaintScrolls If scrolls the app performs by redrawing in response are detected and glide.
+     */
+    public void setAppSmoothScrolling(boolean steadyFling, boolean regionScrolls, boolean repaintScrolls) {
+        mAppFlingEnabled = steadyFling;
+        mAppRegionScrollsEnabled = regionScrolls;
+        mAppRepaintScrollsEnabled = repaintScrolls;
+        if (!steadyFling && mPixelScrollerMode == PIXEL_SCROLLER_APP) stopPixelScroller();
+        mRegionScrollAnimation.setScrollEventsEnabled(regionScrolls);
+        if (!repaintScrolls) mRepaintScrollDetector.clear();
         attachRegionScrollAnimation();
         invalidate();
     }
@@ -1210,19 +1326,30 @@ public final class TerminalView extends View {
      * detaching it from any previous one, which ends a running animation.
      */
     void attachRegionScrollAnimation() {
-        final TerminalEmulator target = (mSmoothScrollEnabled && mScrollAnimationDuration > 0) ? mEmulator : null;
+        final TerminalEmulator target = (mScrollAnimationDuration > 0 && (mAppRegionScrollsEnabled || mAppRepaintScrollsEnabled)) ? mEmulator : null;
         if (target == mRegionScrollAnimationEmulator) return;
         if (mRegionScrollAnimationEmulator != null && mRegionScrollAnimationEmulator.getRegionScrollAnimation() == mRegionScrollAnimation)
             mRegionScrollAnimationEmulator.setRegionScrollAnimation(null);
         mRegionScrollAnimation.reset();
+        mRepaintScrollDetector.clear();
         if (target != null) target.setRegionScrollAnimation(mRegionScrollAnimation);
         mRegionScrollAnimationEmulator = target;
     }
 
-    /** The user is scrolling the app: animate the scrolls it performs for the next {@link #REGION_SCROLL_RECORD_MS}. */
-    void recordRegionScrolls() {
+    /**
+     * The user is scrolling the app: animate the scrolls it performs for the next {@link #REGION_SCROLL_RECORD_MS}.
+     *
+     * @param rowsDown The rows just sent, positive towards the end.
+     */
+    void recordRegionScrolls(int rowsDown) {
         attachRegionScrollAnimation();
         if (mRegionScrollAnimationEmulator == null) return;
+        mAppScrollDirection = rowsDown;
+        if (mAppRepaintScrollsEnabled && !mRepaintScrollDetector.hasSnapshot() && mTopRow == 0) {
+            // The screen before the app answers, to compare its redraw with.
+            mRepaintScrollDetector.snapshot(mEmulator.getScreen());
+            mRepaintDetectorScrollEventCount = mRegionScrollAnimation.getScrollEventCount();
+        }
         mRegionScrollAnimation.setRecording(true);
         removeCallbacks(mStopRecordingRegionScrolls);
         postDelayed(mStopRecordingRegionScrolls, REGION_SCROLL_RECORD_MS);
@@ -1385,7 +1512,8 @@ public final class TerminalView extends View {
 
         if (mRegionScrollAnimation.isActive()) {
             if (mRegionScrollAnimation.step(SystemClock.uptimeMillis())) more = true;
-            invalidate();
+            // A redraw being waited for may be half on screen; checkForRepaintScroll() draws it.
+            if (!mRepaintCheckPending) invalidate();
         }
 
         return more;

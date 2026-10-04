@@ -82,7 +82,9 @@ import java.util.Set;
  *      - Add `KEY_DISABLE_FILE_SHARE_RECEIVER` and `KEY_DISABLE_FILE_VIEW_RECEIVER`.
  *
  * - 0.19.0 (2026-10-04)
- *      - Add `KEY_TERMINAL_SMOOTH_SCROLL` and `*KEY_TERMINAL_SCROLL_ANIMATION_DURATION*`.
+ *      - Add `KEY_TERMINAL_SMOOTH_SCROLL`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING`,
+ *        `KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS`
+ *        and `*KEY_TERMINAL_SCROLL_ANIMATION_DURATION*`.
  */
 
 /**
@@ -145,8 +147,17 @@ public final class TermuxPropertyConstants {
 
 
 
-    /** Defines the key for whether terminal scrolling moves by pixels and glides instead of jumping a row at a time */
+    /** Defines the key for whether the terminal scrollback is dragged and flung by pixels instead of a row at a time */
     public static final String KEY_TERMINAL_SMOOTH_SCROLL =  "terminal-smooth-scroll"; // Default: "terminal-smooth-scroll"
+
+    /** Defines the key for whether a fling in an app that scrolls itself sends its wheel events or arrow keys at the fling's rate instead of in a burst */
+    public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING =  "terminal-smooth-scroll-app-fling"; // Default: "terminal-smooth-scroll-app-fling"
+
+    /** Defines the key for whether scroll commands an app sends while the user scrolls it (scroll regions, insert/delete lines) glide */
+    public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS =  "terminal-smooth-scroll-app-regions"; // Default: "terminal-smooth-scroll-app-regions"
+
+    /** Defines the key for whether scrolls an app performs by redrawing while the user scrolls it are detected and glide */
+    public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS =  "terminal-smooth-scroll-app-repaints"; // Default: "terminal-smooth-scroll-app-repaints"
 
 
 
@@ -417,6 +428,9 @@ public final class TermuxPropertyConstants {
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
         KEY_TERMINAL_ONCLICK_URL_OPEN,
         KEY_TERMINAL_SMOOTH_SCROLL,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS,
         KEY_USE_CTRL_SPACE_WORKAROUND,
         KEY_USE_FULLSCREEN,
         KEY_USE_FULLSCREEN_WORKAROUND,
@@ -478,7 +492,10 @@ public final class TermuxPropertyConstants {
     public static final Set<String> TERMUX_DEFAULT_TRUE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST = new HashSet<>(Arrays.asList(
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
-        KEY_TERMINAL_SMOOTH_SCROLL
+        KEY_TERMINAL_SMOOTH_SCROLL,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS
     ));
 
     /** Defines the set for keys loaded by termux that have default inverted boolean behaviour with false as default.

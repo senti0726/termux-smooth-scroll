@@ -660,6 +660,9 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     public void setSmoothScrolling() {
         mActivity.getTerminalView().setSmoothScrolling(mActivity.getProperties().isTerminalSmoothScrollEnabled(),
             mActivity.getProperties().getTerminalScrollAnimationDuration());
+        mActivity.getTerminalView().setAppSmoothScrolling(mActivity.getProperties().isTerminalSmoothScrollAppFlingEnabled(),
+            mActivity.getProperties().isTerminalSmoothScrollAppRegionsEnabled(),
+            mActivity.getProperties().isTerminalSmoothScrollAppRepaintsEnabled());
     }
 
 

@@ -48,6 +48,10 @@ public final class RegionScrollAnimation {
     private static final long MAX_STEP_MS = 100;
 
     private int mDurationMs;
+    /** Whether scroll commands animate. Repaints found by a detector animate either way. */
+    private boolean mScrollEventsEnabled = true;
+    /** How many scroll commands have been reported, animated or not. See {@link #getScrollEventCount()}. */
+    private long mScrollEventCount;
     private final int mMaxLagRows;
     private boolean mRecording;
 
@@ -93,6 +97,25 @@ public final class RegionScrollAnimation {
         return mDurationMs;
     }
 
+    /** Set whether scroll commands (scroll regions, IL/DL, index at a margin) animate. */
+    public void setScrollEventsEnabled(boolean enabled) {
+        mScrollEventsEnabled = enabled;
+        if (!enabled) reset();
+    }
+
+    public boolean isScrollEventsEnabled() {
+        return mScrollEventsEnabled;
+    }
+
+    /**
+     * How many scroll commands the emulator has reported, whether they animated or not. A repaint
+     * detector uses it to stay out of the way of apps that send scroll commands, so that one scroll
+     * is never counted twice.
+     */
+    public long getScrollEventCount() {
+        return mScrollEventCount;
+    }
+
     public int getMaxLagRows() {
         return mMaxLagRows;
     }
@@ -128,7 +151,8 @@ public final class RegionScrollAnimation {
      * @param right The column after the last column of the rectangle.
      */
     public void onRegionScroll(TerminalBuffer screen, int rows, int top, int bottom, int left, int right) {
-        if (!mRecording || mDurationMs == 0) {
+        mScrollEventCount++;
+        if (!mRecording || mDurationMs == 0 || !mScrollEventsEnabled) {
             // Output nobody scrolled for: whatever is standing would now be drawn over the wrong text.
             if (mActive) reset();
             return;
@@ -138,6 +162,27 @@ public final class RegionScrollAnimation {
         // often a prompt or status it redraws in place (less, man). Keep that row still.
         if (top == 0 && bottom == screen.mScreenRows && bottom > 2) bottom--;
 
+        push(screen, null, rows, top, bottom, left, right);
+    }
+
+    /**
+     * Called when an app moved the content of a rectangle by redrawing it rather than with a scroll
+     * command, as found by a {@link RepaintScrollDetector}. The screen already shows the moved
+     * content, so the rows that left the rectangle come from a copy of the screen made before.
+     *
+     * @param previousRows The screen's rows as they were before the redraw, indexed by row.
+     * @see #onRegionScroll for the other parameters.
+     */
+    public void onRegionRepainted(TerminalBuffer screen, TerminalRow[] previousRows, int rows, int top, int bottom, int left, int right) {
+        if (!mRecording || mDurationMs == 0) {
+            if (mActive) reset();
+            return;
+        }
+        push(screen, previousRows, rows, top, bottom, left, right);
+    }
+
+    /** Add a scroll to the offset. Leaving rows are copied from previousRows if not null, else from the screen. */
+    private void push(TerminalBuffer screen, TerminalRow[] previousRows, int rows, int top, int bottom, int left, int right) {
         final int height = bottom - top;
         if (rows == 0 || height <= 0 || right <= left) return;
         if (Math.abs(rows) >= height) {
@@ -154,11 +199,11 @@ public final class RegionScrollAnimation {
         final int columns = screen.mColumns;
         if (rows > 0) {
             // Rows [top, top + rows) leave over the top, the last of them ending up nearest.
-            for (int i = 0; i < rows; i++) mAbove.push(screen, top + i, columns);
+            for (int i = 0; i < rows; i++) mAbove.push(sourceRow(screen, previousRows, top + i), columns);
             // Rows that left over the bottom earlier come back in.
             mBelow.pop(rows);
         } else {
-            for (int i = 0; i < -rows; i++) mBelow.push(screen, bottom - 1 - i, columns);
+            for (int i = 0; i < -rows; i++) mBelow.push(sourceRow(screen, previousRows, bottom - 1 - i), columns);
             mAbove.pop(-rows);
         }
 
@@ -180,6 +225,10 @@ public final class RegionScrollAnimation {
         mOffsetRows += rows;
         if (mOffsetRows > mMaxLagRows) mOffsetRows = mMaxLagRows;
         else if (mOffsetRows < -mMaxLagRows) mOffsetRows = -mMaxLagRows;
+    }
+
+    private static TerminalRow sourceRow(TerminalBuffer screen, TerminalRow[] previousRows, int row) {
+        return previousRows != null ? previousRows[row] : screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
     }
 
     /**
@@ -290,7 +339,7 @@ public final class RegionScrollAnimation {
         }
 
         /** Copy a row of the screen in as the nearest; the farthest falls off when full. */
-        void push(TerminalBuffer screen, int row, int columns) {
+        void push(TerminalRow source, int columns) {
             final int capacity = mRows.length;
             mStart = (mStart - 1 + capacity) % capacity;
             TerminalRow copy = mRows[mStart];
@@ -298,7 +347,7 @@ public final class RegionScrollAnimation {
                 copy = new TerminalRow(columns, TextStyle.NORMAL);
                 mRows[mStart] = copy;
             }
-            copy.copyFrom(screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row)));
+            copy.copyFrom(source);
             if (mCount < capacity) mCount++;
         }
 
