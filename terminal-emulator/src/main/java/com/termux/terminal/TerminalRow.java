@@ -90,6 +90,22 @@ public final class TerminalRow {
         return mSpaceUsed;
     }
 
+    /** Make this row an exact copy of a row with the same number of columns, reusing this row's arrays. */
+    void copyFrom(TerminalRow source) {
+        if (mText.length < source.mSpaceUsed) mText = new char[source.mText.length];
+        System.arraycopy(source.mText, 0, mText, 0, source.mSpaceUsed);
+        System.arraycopy(source.mStyle, 0, mStyle, 0, mColumns);
+        mSpaceUsed = source.mSpaceUsed;
+        mLineWrap = source.mLineWrap;
+        mHasNonOneWidthOrSurrogateChars = source.mHasNonOneWidthOrSurrogateChars;
+        mHasTerminalBitmap = source.mHasTerminalBitmap;
+    }
+
+    /** The number of columns in this row. */
+    public int getColumns() {
+        return mColumns;
+    }
+
     /** Note that the column may end of second half of wide character. */
     public int findStartOfColumn(int column) {
         if (column == mColumns) return getSpaceUsed();

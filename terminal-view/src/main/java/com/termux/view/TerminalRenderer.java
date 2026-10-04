@@ -9,6 +9,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.os.Build;
 
+import com.termux.terminal.RegionScrollAnimation;
 import com.termux.terminal.TerminalBuffer;
 import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalRow;
@@ -36,6 +37,9 @@ public final class TerminalRenderer {
     final int mFontLineSpacingAndAscent;
 
     private final float[] asciiMeasures = new float[127];
+
+    /** The row passed to {@link #drawRow} for a row that is no longer on screen, so it never shows the cursor or selection. */
+    private static final int GHOST_ROW = Integer.MIN_VALUE;
 
     /** Per-render state shared by {@link #drawRow}, set at the start of each render so that drawing allocates nothing. */
     private boolean mReverseVideo, mCursorVisible;
@@ -77,6 +81,22 @@ public final class TerminalRenderer {
      */
     public final void render(TerminalEmulator mEmulator, Canvas canvas, int topRow, int topRowPixelOffset,
                              int selectionY1, int selectionY2, int selectionX1, int selectionX2) {
+        render(mEmulator, canvas, topRow, topRowPixelOffset, null, selectionY1, selectionY2, selectionX1, selectionX2);
+    }
+
+    /**
+     * Render the terminal to a canvas at a specified row scroll, and an optional rectangular selection.
+     *
+     * @param topRowPixelOffset How many pixels of {@code topRow} are scrolled up out of view,
+     *                          0 <= offset < {@link #mFontLineSpacing}. Every row moves up by this
+     *                          much, and the row below the last full one is drawn to fill the gap.
+     * @param regionScroll If not null and active, the rectangle it names is drawn displaced by its
+     *                     offset, with the rows that scrolled out of it filling the band uncovered.
+     *                     Only applied at the bottom of the scrollback, where it describes the screen.
+     */
+    public final void render(TerminalEmulator mEmulator, Canvas canvas, int topRow, int topRowPixelOffset,
+                             RegionScrollAnimation regionScroll,
+                             int selectionY1, int selectionY2, int selectionX1, int selectionX2) {
         mReverseVideo = mEmulator.isReverseVideo();
         mCursorCol = mEmulator.getCursorCol();
         mCursorRow = mEmulator.getCursorRow();
@@ -92,14 +112,93 @@ public final class TerminalRenderer {
         if (mReverseVideo)
             canvas.drawColor(palette[TextStyle.COLOR_INDEX_FOREGROUND], PorterDuff.Mode.SRC);
 
+        // The displacement of the animated rectangle, in whole pixels so that text in motion is not
+        // blended across two pixel rows, and the rectangle itself clamped to the screen.
+        int shift = 0, regionTop = 0, regionBottom = 0, regionLeft = 0, regionRight = 0;
+        if (regionScroll != null && regionScroll.isActive() && topRow == 0 && topRowPixelOffset == 0
+            && regionScroll.getScreen() == screen) {
+            shift = Math.round(regionScroll.getOffsetRows() * mFontLineSpacing);
+            regionTop = Math.max(0, regionScroll.getTop());
+            regionBottom = Math.min(mEmulator.mRows, regionScroll.getBottom());
+            regionLeft = Math.max(0, regionScroll.getLeft());
+            regionRight = Math.min(mEmulator.mColumns, regionScroll.getRight());
+            if (regionTop >= regionBottom || regionLeft >= regionRight) shift = 0;
+        }
+        final float regionLeftX = regionLeft * mFontWidth, regionRightX = regionRight * mFontWidth;
+        final boolean regionIsFullWidth = regionLeft == 0 && regionRight == mEmulator.mColumns;
+
         // One row more than the screen holds is drawn whenever it exists, so that a part-row
         // offset, or the space below the last full row, never shows an empty band.
         final int endRow = Math.min(topRow + mEmulator.mRows + 1, mEmulator.mRows);
         float heightOffset = mFontLineSpacingAndAscent - topRowPixelOffset;
         for (int row = topRow; row < endRow; row++) {
             heightOffset += mFontLineSpacing;
+            TerminalRow lineObject = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
+            if (shift != 0 && row >= regionTop && row < regionBottom) {
+                // Drawn displaced below. Only the columns beside the rectangle are drawn in place.
+                if (!regionIsFullWidth) {
+                    final float rowTopY = heightOffset - mFontLineSpacing;
+                    if (regionLeft > 0) {
+                        canvas.save();
+                        canvas.clipRect(0, rowTopY, regionLeftX, heightOffset);
+                        drawRow(mEmulator, canvas, lineObject, row, heightOffset);
+                        canvas.restore();
+                    }
+                    if (regionRight < mEmulator.mColumns) {
+                        canvas.save();
+                        canvas.clipRect(regionRightX, rowTopY, canvas.getWidth(), heightOffset);
+                        drawRow(mEmulator, canvas, lineObject, row, heightOffset);
+                        canvas.restore();
+                    }
+                }
+                continue;
+            }
+            drawRow(mEmulator, canvas, lineObject, row, heightOffset);
+        }
+
+        if (shift != 0) drawScrolledRegion(mEmulator, canvas, regionScroll, shift,
+            regionTop, regionBottom, regionLeftX, regionRightX);
+    }
+
+    /**
+     * Draw the rectangle of a {@link RegionScrollAnimation} displaced by {@code shift} pixels, and
+     * the rows that scrolled out of it in the band the displacement uncovers. Rows with nothing
+     * kept for them are left blank.
+     */
+    private void drawScrolledRegion(TerminalEmulator mEmulator, Canvas canvas, RegionScrollAnimation regionScroll, int shift,
+                                    int regionTop, int regionBottom, float regionLeftX, float regionRightX) {
+        final TerminalBuffer screen = mEmulator.getScreen();
+        final float clipTop = mFontLineSpacingAndAscent + regionTop * mFontLineSpacing;
+        final float clipBottom = mFontLineSpacingAndAscent + regionBottom * mFontLineSpacing;
+
+        canvas.save();
+        canvas.clipRect(regionLeftX, clipTop, regionRightX, clipBottom);
+
+        for (int row = regionTop; row < regionBottom; row++) {
+            // The bottom of the row, as in render(), moved by the shift.
+            final float heightOffset = mFontLineSpacingAndAscent + (row + 1) * mFontLineSpacing + shift;
+            if (heightOffset <= clipTop || heightOffset - mFontLineSpacing >= clipBottom) continue;
             drawRow(mEmulator, canvas, screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row)), row, heightOffset);
         }
+
+        if (shift > 0) {
+            // Content moved up and is rising into place: the rows that left over the top fill in above it.
+            final int count = regionScroll.getGhostRowsAboveCount();
+            for (int k = 0; k < count; k++) {
+                final float heightOffset = clipTop + shift - k * mFontLineSpacing;
+                if (heightOffset <= clipTop) break;
+                drawRow(mEmulator, canvas, regionScroll.getGhostRowAbove(k), GHOST_ROW, heightOffset);
+            }
+        } else {
+            final int count = regionScroll.getGhostRowsBelowCount();
+            for (int k = 0; k < count; k++) {
+                final float heightOffset = clipBottom + shift + (k + 1) * mFontLineSpacing;
+                if (heightOffset - mFontLineSpacing >= clipBottom) break;
+                drawRow(mEmulator, canvas, regionScroll.getGhostRowBelow(k), GHOST_ROW, heightOffset);
+            }
+        }
+
+        canvas.restore();
     }
 
     /**

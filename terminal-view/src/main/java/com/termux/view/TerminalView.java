@@ -39,6 +39,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 
 import com.termux.terminal.KeyHandler;
+import com.termux.terminal.RegionScrollAnimation;
 import com.termux.terminal.TerminalEmulator;
 import com.termux.terminal.TerminalSession;
 import com.termux.view.textselection.TextSelectionCursorController;
@@ -119,6 +120,24 @@ public final class TerminalView extends View {
     boolean mAppFlingMouseTracking;
     /** The longest app fling, in screens. Each row is one event the app has to handle. */
     static final int MAX_APP_FLING_SCREENS = 1;
+
+    /**
+     * Animates the scrolls an app performs (tmux, nvim, yazi, less) after the user scrolls it. It
+     * is attached to {@link #mRegionScrollAnimationEmulator}, normally {@link #mEmulator}.
+     */
+    final RegionScrollAnimation mRegionScrollAnimation = new RegionScrollAnimation(DEFAULT_SCROLL_ANIMATION_DURATION);
+    TerminalEmulator mRegionScrollAnimationEmulator;
+    /**
+     * For how long after the last wheel event or arrow key sent for a scroll gesture the app's
+     * scrolls are animated. Output that arrives later, or without any gesture, is not.
+     */
+    static final int REGION_SCROLL_RECORD_MS = 300;
+    private final Runnable mStopRecordingRegionScrolls = new Runnable() {
+        @Override
+        public void run() {
+            mRegionScrollAnimation.setRecording(false);
+        }
+    };
 
     private boolean mScrollAnimationFramePosted;
     private final Runnable mScrollAnimationFrame = new Runnable() {
@@ -350,6 +369,7 @@ public final class TerminalView extends View {
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
+        attachRegionScrollAnimation();
 
         // The emulator's cached value will be read in `updateSize()` when emulator is set.
         setTopRow(0, false);
@@ -556,6 +576,13 @@ public final class TerminalView extends View {
         // The rows moved under a smooth fling or glide, so its pixel positions no longer mean the same text.
         if (mTopRow != oldTopRow && mPixelScrollerMode == PIXEL_SCROLLER_NATIVE) stopPixelScroller();
 
+        attachRegionScrollAnimation();
+        if (mRegionScrollAnimation.isActive()) {
+            // The app scrolled in response to the user: draw frames until the offset settles.
+            if (mRegionScrollAnimation.getScreen() != mEmulator.getScreen() || mTopRow != 0) mRegionScrollAnimation.reset();
+            else scheduleScrollAnimationFrame();
+        }
+
         invalidate();
         if (mAccessibilityEnabled) setContentDescription(getText());
     }
@@ -640,6 +667,7 @@ public final class TerminalView extends View {
             glideNativeByRows(rowsDown);
             return;
         }
+        if (rowsDown != 0 && isScrollHandledByApp()) recordRegionScrolls();
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
         for (int i = 0; i < amount; i++) {
@@ -1083,6 +1111,8 @@ public final class TerminalView extends View {
             }
             setTopRow(topRow);
             snapToRowGrid();
+            attachRegionScrollAnimation();
+            mRegionScrollAnimation.reset();
 
             scrollTo(0, 0);
             invalidate();
@@ -1100,7 +1130,7 @@ public final class TerminalView extends View {
                 mTextSelectionCursorController.getSelectors(sel);
             }
 
-            mRenderer.render(mEmulator, canvas, mTopRow, mTopRowPixelOffset, sel[0], sel[1], sel[2], sel[3]);
+            mRenderer.render(mEmulator, canvas, mTopRow, mTopRowPixelOffset, mRegionScrollAnimation, sel[0], sel[1], sel[2], sel[3]);
 
             // render the text selection handles
             renderTextSelection();
@@ -1169,6 +1199,33 @@ public final class TerminalView extends View {
         mSmoothScrollEnabled = enabled;
         mScrollAnimationDuration = Math.max(0, Math.min(animationDuration, MAX_SCROLL_ANIMATION_DURATION));
         if (!enabled) snapToRowGrid();
+        // 0 turns the app scroll animation off, without dividing by it anywhere.
+        mRegionScrollAnimation.setDuration(enabled ? mScrollAnimationDuration : 0);
+        attachRegionScrollAnimation();
+        invalidate();
+    }
+
+    /**
+     * Attach {@link #mRegionScrollAnimation} to the current emulator if app scrolls should animate,
+     * detaching it from any previous one, which ends a running animation.
+     */
+    void attachRegionScrollAnimation() {
+        final TerminalEmulator target = (mSmoothScrollEnabled && mScrollAnimationDuration > 0) ? mEmulator : null;
+        if (target == mRegionScrollAnimationEmulator) return;
+        if (mRegionScrollAnimationEmulator != null && mRegionScrollAnimationEmulator.getRegionScrollAnimation() == mRegionScrollAnimation)
+            mRegionScrollAnimationEmulator.setRegionScrollAnimation(null);
+        mRegionScrollAnimation.reset();
+        if (target != null) target.setRegionScrollAnimation(mRegionScrollAnimation);
+        mRegionScrollAnimationEmulator = target;
+    }
+
+    /** The user is scrolling the app: animate the scrolls it performs for the next {@link #REGION_SCROLL_RECORD_MS}. */
+    void recordRegionScrolls() {
+        attachRegionScrollAnimation();
+        if (mRegionScrollAnimationEmulator == null) return;
+        mRegionScrollAnimation.setRecording(true);
+        removeCallbacks(mStopRecordingRegionScrolls);
+        postDelayed(mStopRecordingRegionScrolls, REGION_SCROLL_RECORD_MS);
     }
 
     public boolean isSmoothScrollEnabled() {
@@ -1293,6 +1350,7 @@ public final class TerminalView extends View {
     boolean stepScrollAnimations() {
         if (mEmulator == null || mRenderer == null) {
             stopPixelScroller();
+            mRegionScrollAnimation.reset();
             return false;
         }
 
@@ -1323,6 +1381,11 @@ public final class TerminalView extends View {
                 }
             }
             if (!more) stopPixelScroller();
+        }
+
+        if (mRegionScrollAnimation.isActive()) {
+            if (mRegionScrollAnimation.step(SystemClock.uptimeMillis())) more = true;
+            invalidate();
         }
 
         return more;

@@ -433,6 +433,9 @@ public final class TerminalEmulator {
     /** If automatic scrolling of terminal is disabled */
     private boolean mAutoScrollDisabled;
 
+    /** Told about every scroll of a rectangle of the screen before it happens, if set. See {@link #setRegionScrollAnimation}. */
+    private RegionScrollAnimation mRegionScrollAnimation;
+
     private byte mUtf8ToFollow, mUtf8Index;
     private final byte[] mUtf8InputBuffer = new byte[4];
     private int mLastEmittedCodePoint = -1;
@@ -2064,6 +2067,7 @@ public final class TerminalEmulator {
                 // http://www.vt100.net/docs/vt100-ug/chapter3.html: "Move the active position to the same horizontal
                 // position on the preceding line. If the active position is at the top margin, a scroll down is performed".
                 if (mCursorRow <= mTopMargin) {
+                    onRegionScroll(-1, mTopMargin, mBottomMargin, mLeftMargin, mRightMargin);
                     mScreen.blockCopy(mLeftMargin, mTopMargin, mRightMargin - mLeftMargin, mBottomMargin - (mTopMargin + 1), mLeftMargin, mTopMargin + 1);
                     blockClear(mLeftMargin, mTopMargin, mRightMargin - mLeftMargin);
                 } else {
@@ -2233,6 +2237,7 @@ public final class TerminalEmulator {
                 int linesAfterCursor = mBottomMargin - mCursorRow;
                 int linesToInsert = Math.min(getArg0(1), linesAfterCursor);
                 int linesToMove = linesAfterCursor - linesToInsert;
+                if (linesToInsert > 0) onRegionScroll(-linesToInsert, mCursorRow, mBottomMargin, 0, mColumns);
                 mScreen.blockCopy(0, mCursorRow, mColumns, linesToMove, 0, mCursorRow + linesToInsert);
                 blockClear(0, mCursorRow, mColumns, linesToInsert);
             }
@@ -2243,6 +2248,7 @@ public final class TerminalEmulator {
                 int linesAfterCursor = mBottomMargin - mCursorRow;
                 int linesToDelete = Math.min(getArg0(1), linesAfterCursor);
                 int linesToMove = linesAfterCursor - linesToDelete;
+                if (linesToDelete > 0) onRegionScroll(linesToDelete, mCursorRow, mBottomMargin, 0, mColumns);
                 mScreen.blockCopy(0, mCursorRow + linesToDelete, mColumns, linesToMove, 0, mCursorRow);
                 blockClear(0, mCursorRow + linesToMove, mColumns, linesToDelete);
             }
@@ -2264,8 +2270,10 @@ public final class TerminalEmulator {
             break;
             case 'S': { // "${CSI}${N}S" - scroll up ${N} lines (default = 1) (SU).
                 final int linesToScroll = getArg0(1);
+                // Reported as one scroll, so that scrolling the whole region away is seen as the clear it is.
+                if (linesToScroll > 0) onRegionScroll(linesToScroll, mTopMargin, mBottomMargin, mLeftMargin, mRightMargin);
                 for (int i = 0; i < linesToScroll; i++)
-                    scrollDownOneLine();
+                    scrollDownOneLine(false);
                 break;
             }
             case 'T':
@@ -2277,6 +2285,7 @@ public final class TerminalEmulator {
                     final int linesToScrollArg = getArg0(1);
                     final int linesBetweenTopAndBottomMargins = mBottomMargin - mTopMargin;
                     final int linesToScroll = Math.min(linesBetweenTopAndBottomMargins, linesToScrollArg);
+                    onRegionScroll(-linesToScroll, mTopMargin, mBottomMargin, mLeftMargin, mRightMargin);
                     mScreen.blockCopy(mLeftMargin, mTopMargin, mRightMargin - mLeftMargin, linesBetweenTopAndBottomMargins - linesToScroll, mLeftMargin, mTopMargin + linesToScroll);
                     blockClear(mLeftMargin, mTopMargin, mRightMargin - mLeftMargin, linesToScroll);
                 } else {
@@ -3063,7 +3072,13 @@ public final class TerminalEmulator {
     }
 
     private void scrollDownOneLine() {
+        scrollDownOneLine(true);
+    }
+
+    /** @param reportScroll Whether to report the scroll to {@link #mRegionScrollAnimation}, false if the caller did. */
+    private void scrollDownOneLine(boolean reportScroll) {
         mScrollCounter++;
+        if (reportScroll) onRegionScroll(1, mTopMargin, mBottomMargin, mLeftMargin, mRightMargin);
         long currentStyle = getStyle();
         if (mLeftMargin != 0 || mRightMargin != mColumns) {
             // Horizontal margin: Do not put anything into scroll history, just non-margin part of screen up.
@@ -3475,6 +3490,23 @@ public final class TerminalEmulator {
 
     public int getTopRow() {
         return mTopRow;
+    }
+
+    /**
+     * Set the {@link RegionScrollAnimation} to tell about scrolls of rectangles of the screen
+     * (scroll region scrolls, index and reverse index at a margin, SU/SD, IL/DL), or null for none.
+     */
+    public void setRegionScrollAnimation(RegionScrollAnimation animation) {
+        mRegionScrollAnimation = animation;
+    }
+
+    public RegionScrollAnimation getRegionScrollAnimation() {
+        return mRegionScrollAnimation;
+    }
+
+    /** Report that the content of rows [top, bottom) and columns [left, right) is about to move up by rows (down if negative). */
+    private void onRegionScroll(int rows, int top, int bottom, int left, int right) {
+        if (mRegionScrollAnimation != null) mRegionScrollAnimation.onRegionScroll(mScreen, rows, top, bottom, left, right);
     }
 
     public void setTopRow(int topRow) {
