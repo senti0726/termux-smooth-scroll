@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Set;
 
 /*
- * Version: v0.18.0
+ * Version: v0.19.0
  * SPDX-License-Identifier: MIT
  *
  * Changelog
@@ -80,6 +80,9 @@ import java.util.Set;
  *
  * - 0.18.0 (2022-06-13)
  *      - Add `KEY_DISABLE_FILE_SHARE_RECEIVER` and `KEY_DISABLE_FILE_VIEW_RECEIVER`.
+ *
+ * - 0.19.0 (2026-10-04)
+ *      - Add `KEY_TERMINAL_SMOOTH_SCROLL` and `*KEY_TERMINAL_SCROLL_ANIMATION_DURATION*`.
  */
 
 /**
@@ -139,6 +142,11 @@ public final class TermuxPropertyConstants {
 
     /** Defines the key for whether url links in terminal transcript will automatically open on click or on tap */
     public static final String KEY_TERMINAL_ONCLICK_URL_OPEN =  "terminal-onclick-url-open"; // Default: "terminal-onclick-url-open"
+
+
+
+    /** Defines the key for whether terminal scrolling moves by pixels and glides instead of jumping a row at a time */
+    public static final String KEY_TERMINAL_SMOOTH_SCROLL =  "terminal-smooth-scroll"; // Default: "terminal-smooth-scroll"
 
 
 
@@ -244,6 +252,14 @@ public final class TermuxPropertyConstants {
     public static final int IVALUE_TERMINAL_MARGIN_VERTICAL_MIN = 0;
     public static final int IVALUE_TERMINAL_MARGIN_VERTICAL_MAX = 100;
     public static final int DEFAULT_IVALUE_TERMINAL_MARGIN_VERTICAL = 0;
+
+
+
+    /** Defines the key for how long a stepped terminal scroll glides for in milliseconds, `0` to jump */
+    public static final String KEY_TERMINAL_SCROLL_ANIMATION_DURATION =  "terminal-scroll-animation-duration"; // Default: "terminal-scroll-animation-duration"
+    public static final int IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MIN = 0;
+    public static final int IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MAX = TerminalView.MAX_SCROLL_ANIMATION_DURATION;
+    public static final int DEFAULT_IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION = TerminalView.DEFAULT_SCROLL_ANIMATION_DURATION;
 
 
 
@@ -400,6 +416,7 @@ public final class TermuxPropertyConstants {
         KEY_HIDE_SOFT_KEYBOARD_ON_STARTUP,
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
         KEY_TERMINAL_ONCLICK_URL_OPEN,
+        KEY_TERMINAL_SMOOTH_SCROLL,
         KEY_USE_CTRL_SPACE_WORKAROUND,
         KEY_USE_FULLSCREEN,
         KEY_USE_FULLSCREEN_WORKAROUND,
@@ -412,6 +429,7 @@ public final class TermuxPropertyConstants {
         KEY_TERMINAL_CURSOR_STYLE,
         KEY_TERMINAL_MARGIN_HORIZONTAL,
         KEY_TERMINAL_MARGIN_VERTICAL,
+        KEY_TERMINAL_SCROLL_ANIMATION_DURATION,
         KEY_TERMINAL_TRANSCRIPT_ROWS,
 
         /* float */
@@ -459,7 +477,8 @@ public final class TermuxPropertyConstants {
      */
     public static final Set<String> TERMUX_DEFAULT_TRUE_BOOLEAN_BEHAVIOUR_PROPERTIES_LIST = new HashSet<>(Arrays.asList(
         KEY_EXTRA_KEYS_TEXT_ALL_CAPS,
-        KEY_RUN_TERMUX_AM_SOCKET_SERVER
+        KEY_RUN_TERMUX_AM_SOCKET_SERVER,
+        KEY_TERMINAL_SMOOTH_SCROLL
     ));
 
     /** Defines the set for keys loaded by termux that have default inverted boolean behaviour with false as default.

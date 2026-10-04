@@ -138,6 +138,7 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
      */
     public void onReloadProperties() {
         setSessionShortcuts();
+        setSmoothScrolling();
     }
 
     /**
@@ -652,6 +653,13 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             };
         }
         return mShowSoftKeyboardRunnable;
+    }
+
+
+
+    public void setSmoothScrolling() {
+        mActivity.getTerminalView().setSmoothScrolling(mActivity.getProperties().isTerminalSmoothScrollEnabled(),
+            mActivity.getProperties().getTerminalScrollAnimationDuration());
     }
 
 

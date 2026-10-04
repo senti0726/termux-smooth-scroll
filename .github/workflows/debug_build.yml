@@ -5,9 +5,13 @@ on:
     branches:
       - master
       - 'github-releases/**'
+      - smooth-scroll
+      - 'ccr-*'
   pull_request:
     branches:
       - master
+      - smooth-scroll
+  workflow_dispatch:
 
 jobs:
   build:

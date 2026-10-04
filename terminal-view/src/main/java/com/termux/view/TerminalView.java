@@ -32,6 +32,7 @@ import android.view.autofill.AutofillValue;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
+import android.widget.OverScroller;
 import android.widget.Scroller;
 
 import androidx.annotation.Nullable;
@@ -82,6 +83,51 @@ public final class TerminalView extends View {
 
     /** What was left in from scrolling movement. */
     float mScrollRemainder;
+
+    /**
+     * How many pixels of {@link #mTopRow} are scrolled up out of view, 0 <= offset < line spacing.
+     * With {@link #mTopRow} it makes up the pixel scroll position, see {@link #getScrollPositionPx()}.
+     * Always 0 at the bottom (when {@link #mTopRow} is 0) and while smooth scrolling is off.
+     */
+    int mTopRowPixelOffset;
+
+    /** The default for {@link #mScrollAnimationDuration}. */
+    public static final int DEFAULT_SCROLL_ANIMATION_DURATION = 120;
+    /** The longest {@link #mScrollAnimationDuration} accepted. */
+    public static final int MAX_SCROLL_ANIMATION_DURATION = 2000;
+
+    /** If native scrollback is dragged and flung by pixels instead of whole rows. */
+    boolean mSmoothScrollEnabled = true;
+    /** How long a stepped scroll (mouse wheel, shift+page up/down) glides for, in ms. 0 jumps. */
+    int mScrollAnimationDuration = DEFAULT_SCROLL_ANIMATION_DURATION;
+
+    /** Drives smooth flings and glides, in pixels. What it is driving is {@link #mPixelScrollerMode}. */
+    final OverScroller mPixelScroller;
+    int mPixelScrollerMode = PIXEL_SCROLLER_IDLE;
+    static final int PIXEL_SCROLLER_IDLE = 0;
+    /** Moving the native scrollback position, {@link #getScrollPositionPx()}. */
+    static final int PIXEL_SCROLLER_NATIVE = 1;
+    /** A fling that the app scrolls: turned into one wheel event (or arrow key) per row of travel. */
+    static final int PIXEL_SCROLLER_APP = 2;
+    /** For {@link #PIXEL_SCROLLER_APP}: the scroller position last turned into rows. */
+    int mAppFlingLastY;
+    /** For {@link #PIXEL_SCROLLER_APP}: the pixels travelled that are not yet a whole row. */
+    float mAppFlingRemainder;
+    /** For {@link #PIXEL_SCROLLER_APP}: a copy of the event that ended the gesture, for its position. */
+    MotionEvent mAppFlingEvent;
+    /** For {@link #PIXEL_SCROLLER_APP}: whether the fling was sending wheel events (else arrow keys). */
+    boolean mAppFlingMouseTracking;
+    /** The longest app fling, in screens. Each row is one event the app has to handle. */
+    static final int MAX_APP_FLING_SCREENS = 1;
+
+    private boolean mScrollAnimationFramePosted;
+    private final Runnable mScrollAnimationFrame = new Runnable() {
+        @Override
+        public void run() {
+            mScrollAnimationFramePosted = false;
+            if (stepScrollAnimations()) scheduleScrollAnimationFrame();
+        }
+    };
 
     /** If non-zero, this is the last unicode code point received if that was a combining character. */
     int mCombiningAccent;
@@ -175,6 +221,12 @@ public final class TerminalView extends View {
                     // since we cannot just start sending these events without a starting press event,
                     // which we do not do for touch input, only mouse in onTouchEvent().
                     sendMouseEventCode(e, TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, true);
+                } else if (mSmoothScrollEnabled && !isScrollHandledByApp()) {
+                    scrolledWithFinger = true;
+                    distanceY += mScrollRemainder;
+                    int deltaPixels = (int) distanceY;
+                    mScrollRemainder = distanceY - deltaPixels;
+                    scrollByPixels(deltaPixels);
                 } else {
                     scrolledWithFinger = true;
                     distanceY += mScrollRemainder;
@@ -196,6 +248,10 @@ public final class TerminalView extends View {
             @Override
             public boolean onFling(final MotionEvent e2, float velocityX, float velocityY) {
                 if (mEmulator == null) return true;
+                if (mSmoothScrollEnabled) {
+                    startSmoothFling(e2, velocityY);
+                    return true;
+                }
                 // Do not start scrolling until last fling has been taken care of:
                 if (!mScroller.isFinished()) return true;
 
@@ -257,6 +313,7 @@ public final class TerminalView extends View {
             }
         });
         mScroller = new Scroller(context);
+        mPixelScroller = new OverScroller(context);
         AccessibilityManager am = (AccessibilityManager) context.getSystemService(Context.ACCESSIBILITY_SERVICE);
         mAccessibilityEnabled = am.isEnabled();
     }
@@ -439,17 +496,17 @@ public final class TerminalView extends View {
 
     @Override
     protected int computeVerticalScrollRange() {
-        return mEmulator == null ? 1 : mEmulator.getScreen().getActiveRows();
+        return mEmulator == null ? 1 : mEmulator.getScreen().getActiveRows() * mRenderer.mFontLineSpacing;
     }
 
     @Override
     protected int computeVerticalScrollExtent() {
-        return mEmulator == null ? 1 : mEmulator.mRows;
+        return mEmulator == null ? 1 : mEmulator.mRows * mRenderer.mFontLineSpacing;
     }
 
     @Override
     protected int computeVerticalScrollOffset() {
-        return mEmulator == null ? 1 : mEmulator.getScreen().getActiveRows() + mTopRow - mEmulator.mRows;
+        return mEmulator == null ? 1 : (mEmulator.getScreen().getActiveRows() - mEmulator.mRows) * mRenderer.mFontLineSpacing + getScrollPositionPx();
     }
 
     public void onScreenUpdated() {
@@ -459,6 +516,7 @@ public final class TerminalView extends View {
     public void onScreenUpdated(boolean skipScrolling) {
         if (mEmulator == null) return;
 
+        final int oldTopRow = mTopRow;
         int rowsInHistory = mEmulator.getScreen().getActiveTranscriptRows();
         if (mTopRow < -rowsInHistory) setTopRow(-rowsInHistory);
 
@@ -495,6 +553,9 @@ public final class TerminalView extends View {
 
         mEmulator.clearScrollCounter();
 
+        // The rows moved under a smooth fling or glide, so its pixel positions no longer mean the same text.
+        if (mTopRow != oldTopRow && mPixelScrollerMode == PIXEL_SCROLLER_NATIVE) stopPixelScroller();
+
         invalidate();
         if (mAccessibilityEnabled) setContentDescription(getText());
     }
@@ -514,11 +575,13 @@ public final class TerminalView extends View {
      */
     public void setTextSize(int textSize) {
         mRenderer = new TerminalRenderer(textSize, mRenderer == null ? Typeface.MONOSPACE : mRenderer.mTypeface);
+        snapToRowGrid();
         updateSize();
     }
 
     public void setTypeface(Typeface newTypeface) {
         mRenderer = new TerminalRenderer(mRenderer.mTextSize, newTypeface);
+        snapToRowGrid();
         updateSize();
         invalidate();
     }
@@ -546,7 +609,7 @@ public final class TerminalView extends View {
      */
     public int[] getColumnAndRow(MotionEvent event, boolean relativeToScroll) {
         int column = (int) (event.getX() / mRenderer.mFontWidth);
-        int row = (int) ((event.getY() - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing);
+        int row = (int) ((event.getY() + mTopRowPixelOffset - mRenderer.mFontLineSpacingAndAscent) / mRenderer.mFontLineSpacing);
         if (relativeToScroll) {
             row += mTopRow;
         }
@@ -573,6 +636,10 @@ public final class TerminalView extends View {
 
     /** Perform a scroll, either from dragging the screen or by scrolling a mouse wheel. */
     void doScroll(MotionEvent event, int rowsDown) {
+        if (mSmoothScrollEnabled && !isScrollHandledByApp()) {
+            glideNativeByRows(rowsDown);
+            return;
+        }
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
         for (int i = 0; i < amount; i++) {
@@ -607,6 +674,9 @@ public final class TerminalView extends View {
     public boolean onTouchEvent(MotionEvent event) {
         if (mEmulator == null) return true;
         final int action = event.getAction();
+
+        // A finger on the screen catches a smooth fling, like any scrolling list.
+        if (action == MotionEvent.ACTION_DOWN) stopPixelScroller();
 
         if (isSelectingText()) {
             updateFloatingToolbarVisibility(event);
@@ -1012,6 +1082,7 @@ public final class TerminalView extends View {
                 }
             }
             setTopRow(topRow);
+            snapToRowGrid();
 
             scrollTo(0, 0);
             invalidate();
@@ -1029,7 +1100,7 @@ public final class TerminalView extends View {
                 mTextSelectionCursorController.getSelectors(sel);
             }
 
-            mRenderer.render(mEmulator, canvas, mTopRow, sel[0], sel[1], sel[2], sel[3]);
+            mRenderer.render(mEmulator, canvas, mTopRow, mTopRowPixelOffset, sel[0], sel[1], sel[2], sel[3]);
 
             // render the text selection handles
             renderTextSelection();
@@ -1049,7 +1120,7 @@ public final class TerminalView extends View {
     }
 
     public int getCursorY(float y) {
-        return (int) (((y - 40) / mRenderer.mFontLineSpacing) + mTopRow);
+        return (int) (((y - 40 + mTopRowPixelOffset) / mRenderer.mFontLineSpacing) + mTopRow);
     }
 
     public int getPointX(int cx) {
@@ -1060,11 +1131,16 @@ public final class TerminalView extends View {
     }
 
     public int getPointY(int cy) {
-        return Math.round((cy - mTopRow) * mRenderer.mFontLineSpacing);
+        return Math.round((cy - mTopRow) * mRenderer.mFontLineSpacing) - mTopRowPixelOffset;
     }
 
     public int getTopRow() {
         return mTopRow;
+    }
+
+    /** Get how many pixels of the top row are scrolled up out of view. See {@link #mTopRowPixelOffset}. */
+    public int getTopRowPixelOffset() {
+        return mTopRowPixelOffset;
     }
 
     public void setTopRow(int topRow) {
@@ -1073,9 +1149,183 @@ public final class TerminalView extends View {
 
     public void setTopRow(int topRow, boolean updateEmulator) {
         mTopRow = topRow;
+        // There is nothing below the last row to scroll part of the way to.
+        if (topRow >= 0) mTopRowPixelOffset = 0;
         if (updateEmulator && mEmulator != null) {
             mEmulator.setTopRow(mTopRow);
         }
+    }
+
+
+
+    /**
+     * Set whether native scrollback scrolls smoothly and how long stepped scrolls glide for.
+     *
+     * @param enabled If dragging and flinging moves by pixels rather than whole rows.
+     * @param animationDuration How long a mouse wheel or shift+page up/down step glides for, in
+     *                          ms, from 0 (jump) to {@link #MAX_SCROLL_ANIMATION_DURATION}.
+     */
+    public void setSmoothScrolling(boolean enabled, int animationDuration) {
+        mSmoothScrollEnabled = enabled;
+        mScrollAnimationDuration = Math.max(0, Math.min(animationDuration, MAX_SCROLL_ANIMATION_DURATION));
+        if (!enabled) snapToRowGrid();
+    }
+
+    public boolean isSmoothScrollEnabled() {
+        return mSmoothScrollEnabled;
+    }
+
+    /** Whether a scroll gesture goes to the app (as wheel events or arrow keys) instead of moving the scrollback. */
+    boolean isScrollHandledByApp() {
+        return mEmulator.isMouseTrackingActive() || mEmulator.isAlternateBufferActive();
+    }
+
+    /**
+     * The scroll position in pixels: 0 at the bottom, -(transcript rows * line spacing) at the
+     * top of the scrollback.
+     */
+    int getScrollPositionPx() {
+        return mTopRow * mRenderer.mFontLineSpacing + mTopRowPixelOffset;
+    }
+
+    /**
+     * Move to a pixel scroll position, clamped to the scrollback.
+     *
+     * @return Whether the position changed.
+     */
+    boolean setScrollPositionPx(int position) {
+        final int lineSpacing = mRenderer.mFontLineSpacing;
+        final int top = -mEmulator.getScreen().getActiveTranscriptRows() * lineSpacing;
+        position = Math.max(top, Math.min(position, 0));
+        // Floor division, since the position is negative.
+        final int row = position >= 0 ? 0 : -((-position + lineSpacing - 1) / lineSpacing);
+        final int offset = position - row * lineSpacing;
+        if (row == mTopRow && offset == mTopRowPixelOffset) return false;
+        setTopRow(row);
+        mTopRowPixelOffset = offset;
+        return true;
+    }
+
+    /** Scroll the native scrollback by pixels, positive towards the bottom. */
+    void scrollByPixels(int pixels) {
+        if (pixels == 0) return;
+        if (setScrollPositionPx(getScrollPositionPx() + pixels)) {
+            if (!awakenScrollBars()) invalidate();
+        }
+    }
+
+    /** Glide the native scrollback by whole rows over {@link #mScrollAnimationDuration}, or jump if that is 0. */
+    void glideNativeByRows(int rows) {
+        final int lineSpacing = mRenderer.mFontLineSpacing;
+        final int start = getScrollPositionPx();
+        if (mScrollAnimationDuration <= 0) {
+            stopPixelScroller();
+            scrollByPixels(rows * lineSpacing);
+            return;
+        }
+        // Steps arriving while gliding add up, so a quick run of wheel notches travels all of them.
+        int target = (mPixelScrollerMode == PIXEL_SCROLLER_NATIVE) ? mPixelScroller.getFinalY() : start;
+        target += rows * lineSpacing;
+        target = Math.max(-mEmulator.getScreen().getActiveTranscriptRows() * lineSpacing, Math.min(target, 0));
+        stopPixelScroller();
+        if (target == start) return;
+        mPixelScroller.startScroll(0, start, 0, target - start, mScrollAnimationDuration);
+        mPixelScrollerMode = PIXEL_SCROLLER_NATIVE;
+        scheduleScrollAnimationFrame();
+    }
+
+    /**
+     * Start a fling in pixels. Native scrollback moves with it directly. An app that scrolls
+     * itself gets one wheel event (or arrow key) per row the fling travels, at the rate the
+     * fling travels them, so it slows down smoothly instead of arriving in bursts.
+     */
+    void startSmoothFling(MotionEvent event, float velocityY) {
+        stopPixelScroller();
+        final int lineSpacing = mRenderer.mFontLineSpacing;
+        if (isScrollHandledByApp()) {
+            final int max = MAX_APP_FLING_SCREENS * mEmulator.mRows * lineSpacing;
+            mPixelScroller.fling(0, 0, 0, -(int) velocityY, 0, 0, -max, max);
+            mPixelScrollerMode = PIXEL_SCROLLER_APP;
+            mAppFlingLastY = 0;
+            // Carry over what the finger travelled that was not yet a whole row.
+            mAppFlingRemainder = mScrollRemainder;
+            mAppFlingEvent = MotionEvent.obtain(event);
+            mAppFlingMouseTracking = mEmulator.isMouseTrackingActive();
+        } else {
+            final int top = -mEmulator.getScreen().getActiveTranscriptRows() * lineSpacing;
+            mPixelScroller.fling(0, getScrollPositionPx(), 0, -(int) velocityY, 0, 0, top, 0);
+            mPixelScrollerMode = PIXEL_SCROLLER_NATIVE;
+        }
+        scheduleScrollAnimationFrame();
+    }
+
+    /** Stop a smooth fling or glide where it is. */
+    void stopPixelScroller() {
+        if (mPixelScrollerMode == PIXEL_SCROLLER_IDLE) return;
+        mPixelScroller.forceFinished(true);
+        mPixelScrollerMode = PIXEL_SCROLLER_IDLE;
+        if (mAppFlingEvent != null) {
+            mAppFlingEvent.recycle();
+            mAppFlingEvent = null;
+        }
+    }
+
+    /** Drop any part-row offset, and stop a smooth fling or glide. Used on resize and font changes. */
+    void snapToRowGrid() {
+        stopPixelScroller();
+        if (mTopRowPixelOffset != 0) {
+            mTopRowPixelOffset = 0;
+            invalidate();
+        }
+    }
+
+    void scheduleScrollAnimationFrame() {
+        if (mScrollAnimationFramePosted) return;
+        mScrollAnimationFramePosted = true;
+        postOnAnimation(mScrollAnimationFrame);
+    }
+
+    /**
+     * Advance the smooth scrolling animations by one display frame.
+     *
+     * @return Whether another frame is needed.
+     */
+    boolean stepScrollAnimations() {
+        if (mEmulator == null || mRenderer == null) {
+            stopPixelScroller();
+            return false;
+        }
+
+        boolean more = false;
+        if (mPixelScrollerMode != PIXEL_SCROLLER_IDLE) {
+            if (!mPixelScroller.computeScrollOffset()) {
+                stopPixelScroller();
+            } else if (mPixelScrollerMode == PIXEL_SCROLLER_NATIVE) {
+                if (isScrollHandledByApp()) {
+                    // An app took over the screen mid-fling.
+                    stopPixelScroller();
+                } else {
+                    scrollByPixels(mPixelScroller.getCurrY() - getScrollPositionPx());
+                    more = !mPixelScroller.isFinished();
+                }
+            } else {
+                if (!isScrollHandledByApp() || mAppFlingMouseTracking != mEmulator.isMouseTrackingActive()) {
+                    // The app stopped taking wheel events (or arrow keys) mid-fling.
+                    stopPixelScroller();
+                } else {
+                    final int y = mPixelScroller.getCurrY();
+                    final float travelled = y - mAppFlingLastY + mAppFlingRemainder;
+                    final int rows = (int) (travelled / mRenderer.mFontLineSpacing);
+                    mAppFlingRemainder = travelled - rows * mRenderer.mFontLineSpacing;
+                    mAppFlingLastY = y;
+                    if (rows != 0) doScroll(mAppFlingEvent, rows);
+                    more = !mPixelScroller.isFinished();
+                }
+            }
+            if (!more) stopPixelScroller();
+        }
+
+        return more;
     }
 
 

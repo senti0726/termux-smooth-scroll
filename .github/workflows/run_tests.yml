@@ -5,10 +5,14 @@ on:
     branches:
       - master
       - android-10
+      - smooth-scroll
+      - 'ccr-*'
   pull_request:
     branches:
       - master
       - android-10
+      - smooth-scroll
+  workflow_dispatch:
 
 jobs:
   testing:

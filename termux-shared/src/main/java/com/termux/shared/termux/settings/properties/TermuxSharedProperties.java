@@ -271,6 +271,8 @@ public abstract class TermuxSharedProperties {
                 return (int) getTerminalMarginHorizontalInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_TERMINAL_MARGIN_VERTICAL:
                 return (int) getTerminalMarginVerticalInternalPropertyValueFromValue(value);
+            case TermuxPropertyConstants.KEY_TERMINAL_SCROLL_ANIMATION_DURATION:
+                return (int) getTerminalScrollAnimationDurationInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_TERMINAL_TRANSCRIPT_ROWS:
                 return (int) getTerminalTranscriptRowsInternalPropertyValueFromValue(value);
 
@@ -417,6 +419,24 @@ public abstract class TermuxSharedProperties {
             TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_MARGIN_VERTICAL,
             TermuxPropertyConstants.IVALUE_TERMINAL_MARGIN_VERTICAL_MIN,
             TermuxPropertyConstants.IVALUE_TERMINAL_MARGIN_VERTICAL_MAX,
+            true, true, LOG_TAG);
+    }
+
+    /**
+     * Returns the int for the value if its not null and is between
+     * {@link TermuxPropertyConstants#IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MIN} and
+     * {@link TermuxPropertyConstants#IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MAX},
+     * otherwise returns {@link TermuxPropertyConstants#DEFAULT_IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION}.
+     *
+     * @param value The {@link String} value to convert.
+     * @return Returns the internal value for value.
+     */
+    public static int getTerminalScrollAnimationDurationInternalPropertyValueFromValue(String value) {
+        return SharedProperties.getDefaultIfNotInRange(TermuxPropertyConstants.KEY_TERMINAL_SCROLL_ANIMATION_DURATION,
+            DataUtils.getIntFromString(value, TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION),
+            TermuxPropertyConstants.DEFAULT_IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION,
+            TermuxPropertyConstants.IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MIN,
+            TermuxPropertyConstants.IVALUE_TERMINAL_SCROLL_ANIMATION_DURATION_MAX,
             true, true, LOG_TAG);
     }
 
@@ -614,6 +634,10 @@ public abstract class TermuxSharedProperties {
         return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_ONCLICK_URL_OPEN, true);
     }
 
+    public boolean isTerminalSmoothScrollEnabled() {
+        return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_SMOOTH_SCROLL, true);
+    }
+
     public boolean isUsingCtrlSpaceWorkaround() {
         return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_USE_CTRL_SPACE_WORKAROUND, true);
     }
@@ -648,6 +672,10 @@ public abstract class TermuxSharedProperties {
 
     public int getTerminalMarginVertical() {
         return (int) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_MARGIN_VERTICAL, true);
+    }
+
+    public int getTerminalScrollAnimationDuration() {
+        return (int) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_SCROLL_ANIMATION_DURATION, true);
     }
 
     public int getTerminalTranscriptRows() {
