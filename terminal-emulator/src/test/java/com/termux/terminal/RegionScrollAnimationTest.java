@@ -230,14 +230,15 @@ public class RegionScrollAnimationTest extends TerminalTestCase {
         float fallAfterNewRow = before - mAnimation.getOffsetRows();
         assertTrue(fallAfterNewRow + " < " + fallPerFrameMoving, fallAfterNewRow >= fallPerFrameMoving);
 
-        // A spring released from rest at the same offset starts slower.
+        // And a row that starts the animation is already moving on the first frame, instead of
+        // easing in from a standstill: an exponential decay drops 1 - e^-(6.64 * 16 / 120) = 59%.
         RegionScrollAnimation fromRest = new RegionScrollAnimation(DURATION);
         fromRest.setRecording(true);
         mTerminal.setRegionScrollAnimation(fromRest);
         enterString("\033[S");
         fromRest.step(0);
         fromRest.step(16);
-        assertTrue(fallAfterNewRow > 1 - fromRest.getOffsetRows());
+        assertEquals(Math.exp(-6.64 * 16 / DURATION), fromRest.getOffsetRows(), 0.01);
     }
 
     public void testResetEndsEverything() {

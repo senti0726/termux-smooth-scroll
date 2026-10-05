@@ -642,6 +642,10 @@ public abstract class TermuxSharedProperties {
         return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING, true);
     }
 
+    public boolean isTerminalSmoothScrollAppCoalesceEnabled() {
+        return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE, true);
+    }
+
     public boolean isTerminalSmoothScrollAppRegionsEnabled() {
         return (boolean) getInternalPropertyValue(TermuxPropertyConstants.KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS, true);
     }

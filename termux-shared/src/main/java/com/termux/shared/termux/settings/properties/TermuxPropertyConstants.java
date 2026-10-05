@@ -82,7 +82,7 @@ import java.util.Set;
  *      - Add `KEY_DISABLE_FILE_SHARE_RECEIVER` and `KEY_DISABLE_FILE_VIEW_RECEIVER`.
  *
  * - 0.19.0 (2026-10-04)
- *      - Add `KEY_TERMINAL_SMOOTH_SCROLL`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING`,
+ *      - Add `KEY_TERMINAL_SMOOTH_SCROLL`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE`,
  *        `KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS`
  *        and `*KEY_TERMINAL_SCROLL_ANIMATION_DURATION*`.
  */
@@ -152,6 +152,9 @@ public final class TermuxPropertyConstants {
 
     /** Defines the key for whether a fling in an app that scrolls itself sends its wheel events or arrow keys at the fling's rate instead of in a burst */
     public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING =  "terminal-smooth-scroll-app-fling"; // Default: "terminal-smooth-scroll-app-fling"
+
+    /** Defines the key for whether wheel events or arrow keys for an app wait until it answered the ones before, instead of queueing up */
+    public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE =  "terminal-smooth-scroll-app-coalesce"; // Default: "terminal-smooth-scroll-app-coalesce"
 
     /** Defines the key for whether scroll commands an app sends while the user scrolls it (scroll regions, insert/delete lines) glide */
     public static final String KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS =  "terminal-smooth-scroll-app-regions"; // Default: "terminal-smooth-scroll-app-regions"
@@ -429,6 +432,7 @@ public final class TermuxPropertyConstants {
         KEY_TERMINAL_ONCLICK_URL_OPEN,
         KEY_TERMINAL_SMOOTH_SCROLL,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS,
         KEY_USE_CTRL_SPACE_WORKAROUND,
@@ -494,6 +498,7 @@ public final class TermuxPropertyConstants {
         KEY_RUN_TERMUX_AM_SOCKET_SERVER,
         KEY_TERMINAL_SMOOTH_SCROLL,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING,
+        KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS,
         KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS
     ));

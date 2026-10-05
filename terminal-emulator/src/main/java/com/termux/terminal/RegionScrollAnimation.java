@@ -23,7 +23,8 @@ package com.termux.terminal;
  *     the application declared, like a status line, never move. When the whole screen scrolls,
  *     which means no region was declared, its last row is held still as the likely prompt.</li>
  *     <li>The offset follows a critically damped spring, which keeps its speed across rows
- *     instead of restarting an ease-out on every row.</li>
+ *     instead of restarting an ease-out on every row. A scroll that starts the animation starts
+ *     it already moving, so it does not ease in from a standstill.</li>
  *     <li>The offset never lags more than {@link #getMaxLagRows()} rows, the rest lands at once.
  *     A scroll of the whole rectangle or more (a clear) is not animated.</li>
  * </ul>
@@ -222,9 +223,16 @@ public final class RegionScrollAnimation {
             mLastStepTime = -1;
         }
 
+        final boolean fromRest = mOffsetRows == 0 && mVelocity == 0;
         mOffsetRows += rows;
         if (mOffsetRows > mMaxLagRows) mOffsetRows = mMaxLagRows;
         else if (mOffsetRows < -mMaxLagRows) mOffsetRows = -mMaxLagRows;
+        if (fromRest) {
+            // Start already moving, at the speed that makes the spring a plain exponential decay,
+            // instead of easing in from a standstill, which reads as lag on a multi-row scroll.
+            // Rows that arrive later keep the spring's speed, as before.
+            mVelocity = (float) (-SPRING_SETTLE / mDurationMs * mOffsetRows);
+        }
     }
 
     private static TerminalRow sourceRow(TerminalBuffer screen, TerminalRow[] previousRows, int row) {

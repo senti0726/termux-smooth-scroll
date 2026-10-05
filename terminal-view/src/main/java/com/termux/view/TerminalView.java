@@ -102,6 +102,27 @@ public final class TerminalView extends View {
     boolean mSmoothScrollEnabled = true;
     /** If a fling an app scrolls sends its wheel events (or arrow keys) at the fling's rate, else in a burst as stock. */
     boolean mAppFlingEnabled = true;
+    /**
+     * If wheel events (or arrow keys) for an app wait until it has answered the ones before, so a
+     * fast swipe or fling reaches it in batches it can keep up with instead of a queue it falls
+     * behind on. No rows are dropped. See {@link #queueAppScroll}.
+     */
+    boolean mAppScrollCoalesceEnabled = true;
+    /** Rows of wheel events (or arrow keys) not yet sent, positive towards the end. */
+    int mQueuedAppScrollRows;
+    /** A copy of the last event that queued rows, for the position wheel events report. */
+    MotionEvent mQueuedAppScrollEvent;
+    /** Whether rows were sent and the app has not produced output since. */
+    boolean mAppScrollAwaitingOutput;
+    /** How long to wait for an app to answer before sending the queued rows anyway. */
+    static final int APP_SCROLL_RESPONSE_TIMEOUT_MS = 100;
+    private final Runnable mAppScrollResponseTimeout = new Runnable() {
+        @Override
+        public void run() {
+            mAppScrollAwaitingOutput = false;
+            flushQueuedAppScroll();
+        }
+    };
     /** If scroll commands an app sends during a scroll gesture (scroll regions, IL/DL) glide. */
     boolean mAppRegionScrollsEnabled = true;
     /** If scrolls an app performs by redrawing during a scroll gesture (Claude Code) are detected and glide. */
@@ -170,7 +191,7 @@ public final class TerminalView extends View {
      */
     static final int REPAINT_SETTLE_MS = 12;
     /** The longest the drawing is held back waiting for output to pause, if it keeps streaming. */
-    static final int REPAINT_MAX_HOLD_MS = 48;
+    static final int REPAINT_MAX_HOLD_MS = 32;
     boolean mRepaintCheckPending;
     long mRepaintCheckFirstPendingTime;
     private final Runnable mRepaintCheck = new Runnable() {
@@ -410,6 +431,7 @@ public final class TerminalView extends View {
         mTermSession = session;
         mEmulator = null;
         mCombiningAccent = 0;
+        clearQueuedAppScroll();
         attachRegionScrollAnimation();
 
         // The emulator's cached value will be read in `updateSize()` when emulator is set.
@@ -576,6 +598,13 @@ public final class TerminalView extends View {
 
     public void onScreenUpdated(boolean skipScrolling) {
         if (mEmulator == null) return;
+
+        if (mAppScrollAwaitingOutput) {
+            // The app answered: it can take the rows that queued up meanwhile.
+            mAppScrollAwaitingOutput = false;
+            removeCallbacks(mAppScrollResponseTimeout);
+            flushQueuedAppScroll();
+        }
 
         final int oldTopRow = mTopRow;
         int rowsInHistory = mEmulator.getScreen().getActiveTranscriptRows();
@@ -763,7 +792,18 @@ public final class TerminalView extends View {
             glideNativeByRows(rowsDown);
             return;
         }
-        if (rowsDown != 0 && isScrollHandledByApp()) recordRegionScrolls(rowsDown);
+        if (rowsDown != 0 && isScrollHandledByApp()) {
+            recordRegionScrolls(rowsDown);
+            if (mAppScrollCoalesceEnabled) {
+                queueAppScroll(event, rowsDown);
+                return;
+            }
+        }
+        sendScrollRows(event, rowsDown);
+    }
+
+    /** Send rows of scrolling as wheel events, arrow keys or a scrollback move, whichever applies now. */
+    void sendScrollRows(MotionEvent event, int rowsDown) {
         boolean up = rowsDown < 0;
         int amount = Math.abs(rowsDown);
         for (int i = 0; i < amount; i++) {
@@ -778,6 +818,38 @@ public final class TerminalView extends View {
                 if (!awakenScrollBars()) invalidate();
             }
         }
+    }
+
+    /**
+     * Queue rows of scrolling for the app, sending them at once unless it has not yet answered the
+     * last ones. The paced, one-redraw-per-event stream a fling would otherwise make costs an app
+     * like nvim or Claude Code several times more per row than a batch, and it falls behind.
+     */
+    void queueAppScroll(MotionEvent event, int rowsDown) {
+        mQueuedAppScrollRows += rowsDown;
+        if (mQueuedAppScrollEvent == null || mQueuedAppScrollEvent.getDownTime() != event.getDownTime()) {
+            if (mQueuedAppScrollEvent != null) mQueuedAppScrollEvent.recycle();
+            mQueuedAppScrollEvent = MotionEvent.obtain(event);
+        }
+        if (!mAppScrollAwaitingOutput) flushQueuedAppScroll();
+    }
+
+    /** Send the queued rows, and wait for the app to answer before sending more. */
+    void flushQueuedAppScroll() {
+        final int rows = mQueuedAppScrollRows;
+        mQueuedAppScrollRows = 0;
+        if (rows == 0 || mEmulator == null || mQueuedAppScrollEvent == null || !isScrollHandledByApp()) return;
+        sendScrollRows(mQueuedAppScrollEvent, rows);
+        mAppScrollAwaitingOutput = true;
+        removeCallbacks(mAppScrollResponseTimeout);
+        postDelayed(mAppScrollResponseTimeout, APP_SCROLL_RESPONSE_TIMEOUT_MS);
+    }
+
+    /** Forget queued rows, e.g. when the session changes. */
+    void clearQueuedAppScroll() {
+        mQueuedAppScrollRows = 0;
+        mAppScrollAwaitingOutput = false;
+        removeCallbacks(mAppScrollResponseTimeout);
     }
 
     /** Overriding {@link View#onGenericMotionEvent(MotionEvent)}. */
@@ -1311,6 +1383,21 @@ public final class TerminalView extends View {
      * @param repaintScrolls If scrolls the app performs by redrawing in response are detected and glide.
      */
     public void setAppSmoothScrolling(boolean steadyFling, boolean regionScrolls, boolean repaintScrolls) {
+        setAppSmoothScrolling(steadyFling, true, regionScrolls, repaintScrolls);
+    }
+
+    /**
+     * @param coalesce If wheel events (or arrow keys) wait until the app answered the ones before, see {@link #queueAppScroll}.
+     * @see #setAppSmoothScrolling(boolean, boolean, boolean)
+     */
+    public void setAppSmoothScrolling(boolean steadyFling, boolean coalesce, boolean regionScrolls, boolean repaintScrolls) {
+        mAppScrollCoalesceEnabled = coalesce;
+        if (!coalesce) {
+            // Nothing will wait for output any more: send what is queued now.
+            mAppScrollAwaitingOutput = false;
+            removeCallbacks(mAppScrollResponseTimeout);
+            flushQueuedAppScroll();
+        }
         mAppFlingEnabled = steadyFling;
         mAppRegionScrollsEnabled = regionScrolls;
         mAppRepaintScrollsEnabled = repaintScrolls;
