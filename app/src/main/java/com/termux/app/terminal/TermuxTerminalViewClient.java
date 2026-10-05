@@ -62,6 +62,13 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
     /** Keeping track of the special keys acting as Ctrl and Fn for the soft keyboard and other hardware keys. */
     boolean mVirtualControlKeyDown, mVirtualFnKeyDown;
 
+    /** When the volume down key (the virtual Ctrl key) last went down. */
+    private long mVirtualControlKeyDownTime;
+    /** Whether a key was combined with the volume down key since it went down, i.e. it was used as Ctrl. */
+    private boolean mVirtualControlKeyUsed;
+    /** The longest press of the volume down key that still counts as a tap, in ms. */
+    private static final int VOLUME_DOWN_TAP_MAX_MS = 400;
+
     private Runnable mShowSoftKeyboardRunnable;
 
     private boolean mShowSoftKeyboardIgnoreOnce;
@@ -310,6 +317,16 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
             // Do not steal dedicated buttons from a full external keyboard.
             return false;
         } else if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            if (down && event.getRepeatCount() == 0) {
+                mVirtualControlKeyDownTime = event.getEventTime();
+                mVirtualControlKeyUsed = false;
+            } else if (!down && mVirtualControlKeyDown && !mVirtualControlKeyUsed
+                && event.getEventTime() - mVirtualControlKeyDownTime < VOLUME_DOWN_TAP_MAX_MS
+                && mActivity.getProperties().shouldVolumeDownTapToggleKeyboard()) {
+                // A tap with nothing typed while it was held: the keyboard key. Holding it with a
+                // key still sends Ctrl+key, and a long press with nothing typed does nothing.
+                onToggleSoftKeyboardRequest();
+            }
             mVirtualControlKeyDown = down;
             return true;
         } else if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) {
@@ -323,6 +340,9 @@ public class TermuxTerminalViewClient extends TermuxTerminalViewClientBase {
 
     @Override
     public boolean readControlKey() {
+        // Read whenever a key or a soft keyboard character is processed, so the volume down key
+        // being held at that moment means it was used as Ctrl, not tapped.
+        if (mVirtualControlKeyDown) mVirtualControlKeyUsed = true;
         return readExtraKeysSpecialButton(SpecialButton.CTRL) || mVirtualControlKeyDown;
     }
 

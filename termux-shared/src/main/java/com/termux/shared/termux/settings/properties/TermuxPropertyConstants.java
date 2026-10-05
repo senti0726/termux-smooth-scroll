@@ -85,6 +85,7 @@ import java.util.Set;
  *      - Add `KEY_TERMINAL_SMOOTH_SCROLL`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_FLING`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_COALESCE`,
  *        `KEY_TERMINAL_SMOOTH_SCROLL_APP_REGIONS`, `KEY_TERMINAL_SMOOTH_SCROLL_APP_REPAINTS`
  *        and `*KEY_TERMINAL_SCROLL_ANIMATION_DURATION*`.
+ *      - Add `KEY_VOLUME_DOWN_TAP_ACTION` and `MAP_VOLUME_DOWN_TAP_ACTION`.
  */
 
 /**
@@ -414,6 +415,25 @@ public final class TermuxPropertyConstants {
 
 
 
+    /**
+     * Defines the key for what a short tap of the volume down key does while it is the virtual
+     * Ctrl key. Holding it still works as Ctrl either way.
+     */
+    public static final String KEY_VOLUME_DOWN_TAP_ACTION =  "volume-down-tap-action"; // Default: "volume-down-tap-action"
+
+    public static final String IVALUE_VOLUME_DOWN_TAP_ACTION_KEYBOARD = "keyboard";
+    public static final String IVALUE_VOLUME_DOWN_TAP_ACTION_NONE = "none";
+    public static final String DEFAULT_IVALUE_VOLUME_DOWN_TAP_ACTION = IVALUE_VOLUME_DOWN_TAP_ACTION_KEYBOARD;
+
+    /** Defines the bidirectional map for volume down tap action values and their internal values */
+    public static final ImmutableBiMap<String, String> MAP_VOLUME_DOWN_TAP_ACTION =
+        new ImmutableBiMap.Builder<String, String>()
+            .put(IVALUE_VOLUME_DOWN_TAP_ACTION_KEYBOARD, IVALUE_VOLUME_DOWN_TAP_ACTION_KEYBOARD)
+            .put(IVALUE_VOLUME_DOWN_TAP_ACTION_NONE, IVALUE_VOLUME_DOWN_TAP_ACTION_NONE)
+            .build();
+
+
+
 
 
     /** Defines the set for keys loaded by termux
@@ -466,7 +486,8 @@ public final class TermuxPropertyConstants {
         KEY_EXTRA_KEYS_STYLE,
         KEY_NIGHT_MODE,
         KEY_SOFT_KEYBOARD_TOGGLE_BEHAVIOUR,
-        KEY_VOLUME_KEYS_BEHAVIOUR
+        KEY_VOLUME_KEYS_BEHAVIOUR,
+        KEY_VOLUME_DOWN_TAP_ACTION
     ));
 
     /** Defines the set for keys loaded by termux that have default boolean behaviour with false as default.

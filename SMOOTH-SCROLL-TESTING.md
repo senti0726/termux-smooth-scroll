@@ -213,6 +213,18 @@ no mouse tracking, a swipe sends arrow keys.
 
 yazi isn't covered, as agreed; it should behave as before.
 
+### 7. Volume down as the keyboard key
+
+Volume down is still the virtual Ctrl key when held. A quick tap now shows or hides the keyboard,
+like the KEYBOARD extra key.
+
+1. **Tap volume down** (under 0.4 s). The keyboard appears; tap again and it hides.
+2. **Hold volume down and press `c`** on the keyboard. That sends Ctrl-C, and the keyboard does
+   not toggle when you let go.
+3. **Hold volume down for a second and let go,** with nothing typed. Nothing happens.
+4. `volume-down-tap-action = none` in `termux.properties` (then `termux-reload-settings`) turns
+   the tap off. `volume-keys = volume` still turns both volume keys back into volume keys.
+
 ## Reporting back
 
 For each problem, give: the section and step number above, the app (shell, tmux, nvim, less, Claude Code), the switches you had on, the gesture

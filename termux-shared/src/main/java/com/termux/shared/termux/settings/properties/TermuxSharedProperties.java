@@ -300,6 +300,8 @@ public abstract class TermuxSharedProperties {
                 return (String) getNightModeInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_SOFT_KEYBOARD_TOGGLE_BEHAVIOUR:
                 return (String) getSoftKeyboardToggleBehaviourInternalPropertyValueFromValue(value);
+            case TermuxPropertyConstants.KEY_VOLUME_DOWN_TAP_ACTION:
+                return (String) getVolumeDownTapActionInternalPropertyValueFromValue(value);
             case TermuxPropertyConstants.KEY_VOLUME_KEYS_BEHAVIOUR:
                 return (String) getVolumeKeysBehaviourInternalPropertyValueFromValue(value);
 
@@ -586,6 +588,16 @@ public abstract class TermuxSharedProperties {
      * @param value {@link String} value to convert.
      * @return Returns the internal value for value.
      */
+    public static String getVolumeDownTapActionInternalPropertyValueFromValue(String value) {
+        return (String) SharedProperties.getDefaultIfNotInMap(TermuxPropertyConstants.KEY_VOLUME_DOWN_TAP_ACTION, TermuxPropertyConstants.MAP_VOLUME_DOWN_TAP_ACTION, SharedProperties.toLowerCase(value), TermuxPropertyConstants.DEFAULT_IVALUE_VOLUME_DOWN_TAP_ACTION, true, LOG_TAG);
+    }
+
+    /**
+     * Returns the value itself if it is not {@code null}, otherwise returns {@link TermuxPropertyConstants#DEFAULT_IVALUE_VOLUME_KEYS_BEHAVIOUR}.
+     *
+     * @param value {@link String} value to convert.
+     * @return Returns the internal value for value.
+     */
     public static String getVolumeKeysBehaviourInternalPropertyValueFromValue(String value) {
         return (String) SharedProperties.getDefaultIfNotInMap(TermuxPropertyConstants.KEY_VOLUME_KEYS_BEHAVIOUR, TermuxPropertyConstants.MAP_VOLUME_KEYS_BEHAVIOUR, SharedProperties.toLowerCase(value), TermuxPropertyConstants.DEFAULT_IVALUE_VOLUME_KEYS_BEHAVIOUR, true, LOG_TAG);
     }
@@ -722,6 +734,10 @@ public abstract class TermuxSharedProperties {
 
     public boolean shouldEnableDisableSoftKeyboardOnToggle() {
         return (boolean) TermuxPropertyConstants.IVALUE_SOFT_KEYBOARD_TOGGLE_BEHAVIOUR_ENABLE_DISABLE.equals(getInternalPropertyValue(TermuxPropertyConstants.KEY_SOFT_KEYBOARD_TOGGLE_BEHAVIOUR, true));
+    }
+
+    public boolean shouldVolumeDownTapToggleKeyboard() {
+        return (boolean) TermuxPropertyConstants.IVALUE_VOLUME_DOWN_TAP_ACTION_KEYBOARD.equals(getInternalPropertyValue(TermuxPropertyConstants.KEY_VOLUME_DOWN_TAP_ACTION, true));
     }
 
     public boolean areVirtualVolumeKeysDisabled() {
