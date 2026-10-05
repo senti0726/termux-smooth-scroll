@@ -69,13 +69,14 @@ terminal-smooth-scroll-app-regions = true
 # scrolls the app performs by redrawing while you scroll it are detected and glide (Claude Code).
 terminal-smooth-scroll-app-repaints = true
 
-# Default 120 (ms), range 0-2000. How long the glides take: app scrolls, a mouse wheel notch,
+# Default 600 (ms, your Ghostty value; it was 120), range 0-2000. How long the glides take: app scrolls, a mouse wheel notch,
 # shift+PgUp/PgDn. 0 = no glides at all (both app switches above have no effect). Finger drags and
 # flings of the scrollback never wait on it.
 terminal-scroll-animation-duration = 120
 ```
 
-Values worth trying for the duration: `0`, `80`, `120`, `180`, `260` (the Ghostty presets).
+Values worth trying for the duration: `260`, `400`, `600`, `800`. Lower feels snappier, higher
+smoother but further behind the finger.
 
 To tell which feature causes a problem, turn them off one at a time: `app-repaints` first, then
 `app-regions`, then `app-coalesce`, then `app-fling`.
@@ -146,7 +147,7 @@ This needs `terminal-smooth-scroll-app-regions = true`. Open `tmux`, then `nvim`
    glides.
 
 **Failure looks like:** a status line or command line that slides; a blank band at the edge of the
-text area mid-glide (expected only past 24 rows of lag, on very fast flicks); text that slides the
+text area mid-glide (expected only past 48 rows of lag, on very fast flicks); text that slides the
 wrong way, or slides and then jumps back; a seam where part of the window is a row out of step
 with the rest; output gliding with no finger on the screen.
 

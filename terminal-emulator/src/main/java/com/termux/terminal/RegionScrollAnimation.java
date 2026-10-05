@@ -33,7 +33,7 @@ package com.termux.terminal;
 public final class RegionScrollAnimation {
 
     /** The default for {@link #getMaxLagRows()}. */
-    public static final int DEFAULT_MAX_LAG_ROWS = 24;
+    public static final int DEFAULT_MAX_LAG_ROWS = 48;
 
     /**
      * The spring's angular frequency times its duration. A critically damped spring released from

@@ -94,7 +94,7 @@ public final class TerminalView extends View {
     int mTopRowPixelOffset;
 
     /** The default for {@link #mScrollAnimationDuration}. */
-    public static final int DEFAULT_SCROLL_ANIMATION_DURATION = 120;
+    public static final int DEFAULT_SCROLL_ANIMATION_DURATION = 600;
     /** The longest {@link #mScrollAnimationDuration} accepted. */
     public static final int MAX_SCROLL_ANIMATION_DURATION = 2000;
 
@@ -163,6 +163,12 @@ public final class TerminalView extends View {
     private final Runnable mStopRecordingRegionScrolls = new Runnable() {
         @Override
         public void run() {
+            if (mRegionScrollAnimation.isActive()) {
+                // Keep taking the app's scrolls until the glide settles: one arriving after the
+                // gesture's window would otherwise end the glide where it stands, which is a snap.
+                postDelayed(this, REGION_SCROLL_RECORD_MS / 3);
+                return;
+            }
             mRegionScrollAnimation.setRecording(false);
             if (!mRepaintCheckPending) mRepaintScrollDetector.clear();
         }
