@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# nvcat: print files with nvim's own syntax highlighting (your config, colourscheme and
+# treesitter parsers) into the terminal, so they scroll like any other output.
+#
+#   nvcat [-n] [--bg] [--clean] [-l FILETYPE] FILE...     (- or no FILE reads stdin)
+#
+#   -n          line numbers
+#   --bg        paint the colourscheme's background as well
+#   --clean     skip your nvim config (faster; default colours and bundled parsers only)
+#   -l FT       use filetype FT (needed for stdin, or a file without an extension)
+set -euo pipefail
+
+here=$(dirname "$(readlink -f "$0")")
+number=0 bg=0 clean=() filetype="" files=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n) number=1 ;;
+    --bg) bg=1 ;;
+    --clean) clean=(--clean) ;;
+    -l) shift; filetype=${1:-} ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --) shift; files+=("$@"); break ;;
+    *) files+=("$1") ;;
+  esac
+  shift
+done
+[ ${#files[@]} -eq 0 ] && files=(-)
+
+tmp="" status=0
+trap '[ -n "$tmp" ] && rm -f "$tmp"' EXIT
+for file in "${files[@]}"; do
+  if [ "$file" = - ]; then
+    tmp=$(mktemp "${TMPDIR:-/tmp}/nvcat.XXXXXX")
+    cat > "$tmp"
+    file=$tmp
+  elif [ ! -r "$file" ]; then
+    echo "nvcat: $file: cannot read" >&2
+    status=1
+    continue
+  fi
+  # Messages nvim prints while starting go to stderr; only the highlighted text is on stdout.
+  nvim --headless -n -i NONE "${clean[@]}" \
+    --cmd "let g:nvcat_number=$number | let g:nvcat_bg=$bg | let g:nvcat_filetype='$filetype'" \
+    -c "luafile $here/nvcat.lua" -- "$file" 2>/dev/null
+done
+exit $status

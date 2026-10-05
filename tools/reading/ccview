@@ -1,0 +1,363 @@
+#!/usr/bin/env python3
+"""ccview: print a Claude Code session transcript into the terminal, with everything /export leaves out.
+
+Shows your prompts, Claude's replies (light markdown, highlighted code blocks), thinking, tool
+calls (Bash commands highlighted, Edit as a red/green diff, Write content highlighted) and tool
+output. It prints into the plain scrollback, so it scrolls like any other output.
+
+  ccview                  latest session of the current directory (or of any project if none)
+  ccview -l               list this directory's sessions (-a: every project's)
+  ccview ID|PATH          a session by id (a prefix is enough) or .jsonl path
+  ccview -t 3             only the last 3 prompts and what followed them
+
+Highlighting uses Pygments if installed (pip install pygments), else bat, else none.
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import textwrap
+
+PROJECTS = os.path.expanduser(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")) + "/projects"
+
+# Colours, close to Claude Code's own.
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+ITALIC = "\033[3m"
+USER = "\033[38;5;117m"      # light blue
+CLAUDE = "\033[38;5;209m"    # Claude orange
+TOOL = "\033[38;5;114m"      # green
+ERROR = "\033[38;5;203m"     # red
+ADDED = "\033[38;5;114m"
+REMOVED = "\033[38;5;203m"
+CODE = "\033[38;5;180m"      # inline code
+HEADING = "\033[1;38;5;75m"
+THINK = "\033[2;3m"
+RULE = "\033[38;5;240m"
+
+COLOUR = True
+
+
+def c(style, text):
+    return f"{style}{text}{RESET}" if COLOUR else text
+
+
+# --- Highlighting -----------------------------------------------------------------------------
+
+try:
+    import pygments
+    from pygments import highlight as _pyg_highlight
+    from pygments.formatters import Terminal256Formatter
+    from pygments.lexers import get_lexer_by_name, guess_lexer_for_filename
+    from pygments.util import ClassNotFound
+
+    _FORMATTER = Terminal256Formatter(style=os.environ.get("CCVIEW_STYLE", "monokai"))
+except ImportError:  # pragma: no cover - depends on the phone
+    pygments = None
+
+BAT = shutil.which("bat") or shutil.which("batcat")
+
+
+def highlight(code, lang=None, filename=None):
+    """Highlight code for the terminal; returns it unchanged if nothing can."""
+    if not COLOUR or not code:
+        return code
+    if pygments is not None:
+        lexer = None
+        try:
+            if lang:
+                lexer = get_lexer_by_name(lang)
+            elif filename:
+                lexer = guess_lexer_for_filename(filename, code)
+        except ClassNotFound:
+            lexer = None
+        if lexer is not None:
+            return _pyg_highlight(code, lexer, _FORMATTER).rstrip("\n")
+        return code
+    if BAT and (lang or filename):
+        args = [BAT, "--color=always", "--style=plain", "--paging=never"]
+        args += ["-l", lang] if lang else ["--file-name", filename]
+        try:
+            out = subprocess.run(args, input=code, capture_output=True, text=True, timeout=10)
+            if out.returncode == 0:
+                return out.stdout.rstrip("\n")
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return code
+
+
+# --- Markdown, lightly ------------------------------------------------------------------------
+
+FENCE = re.compile(r"^(\s*)(```|~~~)\s*([\w+#.-]*)\s*$")
+
+
+def inline_md(line):
+    if not COLOUR:
+        return line
+    line = re.sub(r"`([^`]+)`", lambda m: c(CODE, m.group(1)), line)
+    line = re.sub(r"\*\*([^*]+)\*\*", lambda m: c(BOLD, m.group(1)), line)
+    return line
+
+
+def render_markdown(text):
+    """Headings, bold, inline code and highlighted fenced code blocks. Everything else as is."""
+    out, block, lang, fence = [], None, None, None
+    for line in text.split("\n"):
+        m = FENCE.match(line)
+        if block is not None:
+            if m and m.group(2) == fence and not m.group(3):
+                out.append(highlight("\n".join(block), lang or "text"))
+                block = None
+            else:
+                block.append(line)
+            continue
+        if m:
+            block, lang, fence = [], m.group(3), m.group(2)
+            continue
+        h = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if h:
+            out.append(c(HEADING, h.group(2)))
+        else:
+            out.append(inline_md(line))
+    if block is not None:
+        out.append(highlight("\n".join(block), lang or "text"))
+    return "\n".join(out)
+
+
+# --- Sessions -----------------------------------------------------------------------------------
+
+
+def project_dir(path):
+    return os.path.join(PROJECTS, re.sub(r"[^A-Za-z0-9]", "-", path))
+
+
+def sessions(all_projects):
+    if all_projects:
+        files = glob.glob(os.path.join(PROJECTS, "*", "*.jsonl"))
+    else:
+        files = glob.glob(os.path.join(project_dir(os.getcwd()), "*.jsonl"))
+    return sorted(files, key=os.path.getmtime, reverse=True)
+
+
+def find_session(arg):
+    if arg is None:
+        found = sessions(False) or sessions(True)
+        if not found:
+            sys.exit(f"ccview: no sessions under {PROJECTS}")
+        return found[0]
+    if os.path.isfile(arg):
+        return arg
+    matches = [f for f in sessions(True) if os.path.basename(f).startswith(arg)]
+    if not matches:
+        sys.exit(f"ccview: no session starting with {arg!r}")
+    return matches[0]
+
+
+def read_entries(path):
+    entries = []
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return entries
+
+
+def title_of(path):
+    title, first = None, None
+    for e in read_entries(path):
+        if e.get("type") == "ai-title" and e.get("aiTitle"):
+            title = e["aiTitle"]
+        if first is None and e.get("type") == "user" and not e.get("isMeta"):
+            text = user_text(e.get("message", {}).get("content"))
+            if text:
+                first = text
+    return title or (first or "").strip().split("\n")[0][:80]
+
+
+def list_sessions(all_projects):
+    import datetime
+
+    for f in sessions(all_projects)[:40]:
+        when = datetime.datetime.fromtimestamp(os.path.getmtime(f)).strftime("%m-%d %H:%M")
+        sid = os.path.basename(f)[:8]
+        where = os.path.basename(os.path.dirname(f)) if all_projects else ""
+        print(f"{c(DIM, when)}  {c(BOLD, sid)}  {title_of(f)}  {c(DIM, where)}")
+
+
+# --- Rendering ----------------------------------------------------------------------------------
+
+REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.S)
+COMMAND_TAGS = re.compile(r"</?(command-name|command-message|command-args|local-command-stdout)>")
+
+
+def user_text(content):
+    """The text a person typed, without injected reminders."""
+    if isinstance(content, str):
+        parts = [content]
+    elif isinstance(content, list):
+        parts = [b.get("text", "") for b in content if b.get("type") == "text"]
+    else:
+        return ""
+    text = REMINDER.sub("", "\n".join(parts))
+    text = COMMAND_TAGS.sub("", text)
+    return text.strip()
+
+
+def indent(text, first, rest):
+    lines = text.split("\n")
+    return "\n".join((first if i == 0 else rest) + l for i, l in enumerate(lines))
+
+
+def truncate(text, max_lines):
+    lines = text.rstrip("\n").split("\n")
+    if max_lines and len(lines) > max_lines:
+        hidden = len(lines) - max_lines
+        lines = lines[:max_lines] + [c(DIM, f"… +{hidden} lines")]
+    return "\n".join(lines)
+
+
+def result_text(content):
+    if isinstance(content, str):
+        return content
+    parts = []
+    for b in content or []:
+        t = b.get("type")
+        if t == "text":
+            parts.append(b.get("text", ""))
+        elif t == "image":
+            parts.append("[image]")
+        elif t == "tool_reference":
+            parts.append(f"[loaded tool {b.get('tool_name')}]")
+    return "\n".join(parts)
+
+
+def short(value, width=100):
+    s = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    s = s.replace("\n", " ⏎ ")
+    return s if len(s) <= width else s[: width - 1] + "…"
+
+
+def render_tool_use(block):
+    name = block.get("name", "?")
+    inp = block.get("input") or {}
+    head = c(BOLD + TOOL, "● " + name)
+    if name == "Bash":
+        desc = inp.get("description")
+        out = [head + (c(DIM, f"  {desc}") if desc else "")]
+        out.append(indent(highlight(inp.get("command", ""), "bash"), "  $ ", "    "))
+        return "\n".join(out)
+    if name in ("Edit", "MultiEdit"):
+        out = [head + "  " + inp.get("file_path", "")]
+        edits = inp.get("edits") or [inp]
+        for e in edits:
+            for l in (e.get("old_string") or "").split("\n"):
+                out.append(c(REMOVED, "  - " + l))
+            for l in (e.get("new_string") or "").split("\n"):
+                out.append(c(ADDED, "  + " + l))
+        return "\n".join(out)
+    if name == "Write":
+        path = inp.get("file_path", "")
+        body = highlight(inp.get("content", ""), filename=os.path.basename(path))
+        return head + "  " + path + "\n" + indent(truncate(body, ARGS.lines * 2), "    ", "    ")
+    if name in ("Read", "Glob", "Grep", "WebFetch", "WebSearch"):
+        main = inp.get("file_path") or inp.get("pattern") or inp.get("url") or inp.get("query") or ""
+        rest = {k: v for k, v in inp.items() if k not in ("file_path", "pattern", "url", "query")}
+        return head + "  " + str(main) + (c(DIM, "  " + short(rest)) if rest else "")
+    if name in ("Agent", "Task"):
+        return head + "  " + c(DIM, inp.get("description", "")) + "\n" + indent(inp.get("prompt", ""), "    ", "    ")
+    return head + "  " + c(DIM, short(inp, 200))
+
+
+def render(path):
+    entries = [e for e in read_entries(path) if not e.get("isSidechain")]
+    if ARGS.turns:
+        prompts = [i for i, e in enumerate(entries) if e.get("type") == "user" and user_text(e.get("message", {}).get("content"))]
+        if len(prompts) > ARGS.turns:
+            entries = entries[prompts[-ARGS.turns]:]
+
+    width = shutil.get_terminal_size((80, 24)).columns
+    rule = c(RULE, "─" * min(width, 100))
+    last_role = None
+    for e in entries:
+        kind = e.get("type")
+        if kind not in ("user", "assistant") or e.get("isMeta"):
+            continue
+        content = (e.get("message") or {}).get("content")
+
+        if kind == "user":
+            text = user_text(content)
+            if text:
+                print()
+                print(rule)
+                print(indent(c(BOLD + USER, text), c(BOLD + USER, "> "), "  "))
+                print(rule)
+                last_role = "user"
+            if isinstance(content, list):
+                for b in content:
+                    if b.get("type") == "image":
+                        print(c(DIM, "  [image]"))
+                    if b.get("type") == "tool_result" and not ARGS.no_tools:
+                        body = REMINDER.sub("", result_text(b.get("content"))).replace("\r", "").strip()
+                        if not body:
+                            body = "(no output)"
+                        style = ERROR if b.get("is_error") else DIM
+                        print(indent(c(style, truncate(body, ARGS.lines)), "  ⎿ ", "    "))
+            continue
+
+        for b in content or []:
+            t = b.get("type")
+            if t == "text":
+                if last_role != "assistant":
+                    print()
+                print(indent(render_markdown(b.get("text", "").strip()), c(CLAUDE, "● "), "  "))
+                last_role = "assistant"
+            elif t == "thinking" and not ARGS.no_thinking:
+                thought = (b.get("thinking") or "").strip()
+                if thought:
+                    print(indent(c(THINK, thought), c(THINK, "∴ "), "  "))
+                elif (e.get("thinkingDurationMs") or 0) >= 1000:
+                    # Newer Claude Code versions keep only how long it thought.
+                    print(c(THINK, f"∴ thought for {e['thinkingDurationMs'] / 1000:.0f}s (text not saved in the transcript)"))
+            elif t == "tool_use" and not ARGS.no_tools:
+                print(render_tool_use(b))
+
+
+def main():
+    global ARGS, COLOUR
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument("session", nargs="?", help="session id (prefix) or .jsonl path; default: the latest")
+    p.add_argument("-l", "--list", action="store_true", help="list sessions of this directory")
+    p.add_argument("-a", "--all", action="store_true", help="with -l, every project's sessions")
+    p.add_argument("-t", "--turns", type=int, default=0, help="only the last N prompts")
+    p.add_argument("-n", "--lines", type=int, default=30, help="lines of tool output to show (0: all)")
+    p.add_argument("--full", action="store_true", help="show all tool output (same as -n 0)")
+    p.add_argument("--no-thinking", action="store_true", help="hide thinking")
+    p.add_argument("--no-tools", action="store_true", help="hide tool calls and their output")
+    p.add_argument("--plain", action="store_true", help="no colours")
+    ARGS = p.parse_args()
+    if ARGS.full:
+        ARGS.lines = 0
+    COLOUR = not ARGS.plain and (sys.stdout.isatty() or os.environ.get("CCVIEW_COLOUR") == "1")
+
+    if ARGS.list:
+        list_sessions(ARGS.all)
+        return
+    try:
+        render(find_session(ARGS.session))
+    except BrokenPipeError:
+        pass
+
+
+if __name__ == "__main__":
+    main()

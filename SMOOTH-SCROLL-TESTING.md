@@ -11,6 +11,27 @@ This fork adds pixel-smooth scrolling to the terminal view. There are two parts:
   redrawing (Claude Code), the shift is found by comparing the screen before and after, and
   glides the same way. The rows that just scrolled out fill the band the glide uncovers.
 
+## One tmux line to add
+
+tmux's copy mode draws a position marker in the pane's top-right corner (`09:14 [190/255]`). It
+sits on the pane's top row, so every copy of it that scrolls out is kept as one of the rows that
+fill the band during a glide, and they stack up into a smear. Hide it in your tmux config
+(tmux 3.5 or newer, check with `tmux -V`):
+
+```tmux
+set -g copy-mode-position-format ''
+```
+
+Then run `tmux source-file ~/.config/tmux/tmux.conf` (or wherever yours lives). The cost is
+losing the position readout in copy mode.
+
+## Reading in the plain shell
+
+For reading only, `nvcat` (a file with nvim's own highlighting), `ccview` (a Claude Code
+transcript including thinking, tool calls and output) and `rd` (picks the right one) print into
+the plain shell, which has the perfect phase 1 scrolling. See `tools/reading/README.md` to
+install them and for their options.
+
 ## Getting the build
 
 The workflow runs on every push to this branch. Pick the arm64 artifact of the latest successful
@@ -40,6 +61,9 @@ terminal-smooth-scroll = true
 # Apps that scroll themselves (tmux, nvim, less, Claude Code):
 # a fling sends its wheel events (or arrow keys) at the fling's slowing rate, not in a burst.
 terminal-smooth-scroll-app-fling = true
+# wheel events (or arrow keys) wait until the app has answered the ones before, so a fast swipe
+# or fling arrives in batches it can keep up with instead of a backlog. No rows are dropped.
+terminal-smooth-scroll-app-coalesce = true
 # scroll commands the app sends while you scroll it glide (nvim, tmux copy mode, less).
 terminal-smooth-scroll-app-regions = true
 # scrolls the app performs by redrawing while you scroll it are detected and glide (Claude Code).
@@ -54,7 +78,7 @@ terminal-scroll-animation-duration = 120
 Values worth trying for the duration: `0`, `80`, `120`, `180`, `260` (the Ghostty presets).
 
 To tell which feature causes a problem, turn them off one at a time: `app-repaints` first, then
-`app-regions`, then `app-fling`.
+`app-regions`, then `app-coalesce`, then `app-fling`.
 
 ## What to try
 
@@ -116,8 +140,7 @@ This needs `terminal-smooth-scroll-app-regions = true`. Open `tmux`, then `nvim`
 6. **Short region.** In a `:split` window only 5 rows high, swipe fast. Rows that scroll out keep
    showing in the band until the glide ends, with no blank flashes.
 7. **tmux copy mode.** Swipe in a shell pane (not nvim). Copy mode's text slides and the status
-   line stays. tmux's `[n/m]` position marker in the corner slides with the text. That is
-   expected.
+   line stays. With the tmux line above, there is no position marker to smear.
 8. **Nothing animates without a finger.** Typing in nvim, `:` commands, `G`/`gg`, `cat bigfile`
    in a pane, and compiler output must all jump as before. Only output within 300 ms of a swipe
    glides.
@@ -130,6 +153,12 @@ with the rest; output gliding with no finger on the screen.
 **Switch to try:** `terminal-smooth-scroll-app-regions = false` stops the glides and keeps the
 steady fling.
 
+9. **Multi-row scrolls (the lag fix).** Swipe fast, and fling hard, in a long file. The text
+   should keep up with the finger and stop soon after the finger stops, with no long run-on
+   after it while nvim catches up. Compare with `terminal-smooth-scroll-app-coalesce = false`
+   (the previous build's behaviour). If it is still laggy, say whether the text is **behind**
+   the finger (and keeps moving after you stop) or **choppy** (moves, but in visible steps).
+
 ### 4. Claude Code inside tmux (phase 2, repaint detection)
 
 This needs `terminal-smooth-scroll-app-repaints = true`. Claude Code redraws its screen instead of
@@ -139,9 +168,11 @@ it. Open a session with a long transcript (resume an old one), in tmux.
 
 1. **Slow swipe up and down in the transcript.** The transcript slides instead of jumping. The
    input box, the footer under it, and the tmux status line stay still.
-2. **Fling, both directions.** The glide follows the steady stream of wheel events. While you
-   scroll, drawing waits up to 12 ms (48 ms at most if output keeps streaming) for each redraw to
-   arrive whole. Scrolling may feel very slightly behind the finger; tell me if it is noticeable.
+2. **Fast swipe and fling, both directions (the lag fix).** Wheel events now wait for Claude
+   Code to finish redrawing before the next batch goes out, so it does not fall behind. While you
+   scroll, drawing waits up to 12 ms (32 ms at most if output keeps streaming) for each redraw to
+   arrive whole. As with nvim, compare with `terminal-smooth-scroll-app-coalesce = false`, and
+   say whether any remaining lag is "behind" or "choppy".
 3. **Scroll while Claude is answering.** It is streaming output, so the transcript changes while
    it moves. Expect it to glide less often, or to jump when the change is too big to recognise.
    It must never slide a wrong-looking screen.

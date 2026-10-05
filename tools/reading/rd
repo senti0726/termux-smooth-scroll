@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# rd: read a file in the plain terminal, so it scrolls with the terminal's own smooth scrolling.
+#
+#   rd FILE...      markdown through glow (if installed), a Claude Code .jsonl through ccview,
+#                   anything else through nvcat (nvim's own highlighting)
+#   rd              the latest Claude Code session of this directory (same as ccview)
+set -uo pipefail
+
+here=$(dirname "$(readlink -f "$0")")
+[ $# -eq 0 ] && exec "$here/ccview"
+
+status=0
+for file in "$@"; do
+  case "$file" in
+    *.md|*.markdown)
+      if command -v glow >/dev/null; then
+        glow -s dark -w "$(tput cols 2>/dev/null || echo 80)" "$file" || status=1
+      else
+        "$here/nvcat" "$file" || status=1
+      fi ;;
+    *.jsonl) "$here/ccview" "$file" || status=1 ;;
+    *) "$here/nvcat" "$file" || status=1 ;;
+  esac
+done
+exit $status
