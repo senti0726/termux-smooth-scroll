@@ -52,7 +52,7 @@ public class ComposeOverlay {
 
         mEdit = new EditText(activity);
         mEdit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE
-            | InputType.TYPE_TEXT_FLAG_AUTO_CORRECT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            | InputType.TYPE_TEXT_FLAG_AUTO_CORRECT);   // no auto-capitals: "Echo" broke commands
         mEdit.setMinLines(1);
         mEdit.setMaxLines(MAX_LINES);
         mEdit.setVerticalScrollBarEnabled(true);
