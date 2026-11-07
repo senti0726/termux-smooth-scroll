@@ -132,8 +132,21 @@ public final class ExtraKeysView extends GridLayout {
     /** Two taps on a sticky key (CTRL, SHIFT, ...) this close together lock it. */
     public static final int DOUBLE_TAP_LOCK_MS = 350;
 
-    /** A key with this name that appears in two rows of the same column is drawn once, two rows tall. */
-    public static final String TALL_KEY = "COMPOSE";
+    /** A key with one of these names that appears in two rows of the same column is drawn once,
+     *  two rows tall (✎, and ← → either side of ↑/↓ in the two-row arrow cross). */
+    public static final java.util.List<String> TALL_KEYS = java.util.Arrays.asList("COMPOSE", "LEFT", "RIGHT");
+
+    static boolean isTall(ExtraKeyButton b) {
+        return b != null && TALL_KEYS.contains(b.getKey());
+    }
+
+    /** Fork: arrows act on finger-down, and a held finger slid onto another arrow switches to it. */
+    public static final java.util.List<String> SLIDE_KEYS = java.util.Arrays.asList("UP", "DOWN", "LEFT", "RIGHT");
+
+    /** Arrow buttons on screen, for finding the one under a sliding finger. */
+    private final Map<View, ExtraKeyButton> mSlideButtons = new HashMap<>();
+    /** The arrow the held finger is on now (null when no arrow is held). */
+    private View mSlideView;
 
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
     public static final int MIN_LONG_PRESS_DURATION = 200;
@@ -397,6 +410,8 @@ public final class ExtraKeysView extends GridLayout {
             state.buttons = new ArrayList<>();
 
         removeAllViews();
+        mSlideButtons.clear();
+        mSlideView = null;
 
         ExtraKeyButton[][] buttons = extraKeysInfo.getMatrix();
 
@@ -406,11 +421,12 @@ public final class ExtraKeysView extends GridLayout {
         for (int row = 0; row < buttons.length; row++) {
             for (int col = 0; col < buttons[row].length; col++) {
                 final ExtraKeyButton buttonInfo = buttons[row][col];
-                if (row > 0 && TALL_KEY.equals(buttonInfo.getKey()) && col < buttons[row - 1].length
-                    && TALL_KEY.equals(buttons[row - 1][col].getKey()))
+                if (row > 0 && isTall(buttonInfo) && col < buttons[row - 1].length
+                    && buttonInfo.getKey().equals(buttons[row - 1][col].getKey()))
                     continue;   // drawn by the row above, two rows tall
-                final int rowSpan = (TALL_KEY.equals(buttonInfo.getKey()) && row + 1 < buttons.length
-                    && col < buttons[row + 1].length && TALL_KEY.equals(buttons[row + 1][col].getKey())) ? 2 : 1;
+                final int rowSpan = (isTall(buttonInfo) && row + 1 < buttons.length
+                    && col < buttons[row + 1].length && buttonInfo.getKey().equals(buttons[row + 1][col].getKey())) ? 2 : 1;
+                final boolean slide = SLIDE_KEYS.contains(buttonInfo.getKey());
 
                 MaterialButton button;
                 if (isSpecialButton(buttonInfo)) {
@@ -430,7 +446,10 @@ public final class ExtraKeysView extends GridLayout {
                     onAnyExtraKeyButtonClick(view, buttonInfo, button);
                 });
 
+                if (slide) mSlideButtons.put(button, buttonInfo);
+
                 button.setOnTouchListener((view, event) -> {
+                    if (slide) return onSlideTouch(view, event);
                     switch (event.getAction()) {
                         case MotionEvent.ACTION_DOWN:
                             view.setBackgroundColor(mButtonActiveBackgroundColor);
@@ -498,6 +517,59 @@ public final class ExtraKeysView extends GridLayout {
     }
 
 
+
+    /**
+     * Fork: touch handling for the arrows. The key is sent on finger-down (no wait for the
+     * release), repeats while held, and if the finger slides onto another arrow without lifting,
+     * that arrow is sent at once and repeats instead (j j j … l l l).
+     */
+    private boolean onSlideTouch(View view, MotionEvent event) {
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                slideTo(view);
+                return true;
+            case MotionEvent.ACTION_MOVE: {
+                View under = slideButtonAt(event.getRawX(), event.getRawY());
+                if (under != null && under != mSlideView) slideTo(under);
+                return true;
+            }
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (mSlideView != null) mSlideView.setBackgroundColor(mButtonBackgroundColor);
+                view.setBackgroundColor(mButtonBackgroundColor);
+                mSlideView = null;
+                stopScheduledExecutors();
+                return true;
+            default:
+                return true;
+        }
+    }
+
+    private void slideTo(View view) {
+        ExtraKeyButton info = mSlideButtons.get(view);
+        if (info == null) return;
+        if (mSlideView != null && mSlideView != view) mSlideView.setBackgroundColor(mButtonBackgroundColor);
+        mSlideView = view;
+        view.setBackgroundColor(mButtonActiveBackgroundColor);
+        MaterialButton button = (MaterialButton) view;
+        stopScheduledExecutors();
+        mLongPressCount = 0;
+        performExtraKeyButtonHapticFeedback(view, info, button);
+        onAnyExtraKeyButtonClick(view, info, button);
+        startScheduledExecutors(view, info, button);
+    }
+
+    /** The arrow button under a screen position, or null. */
+    @Nullable
+    private View slideButtonAt(float rawX, float rawY) {
+        int[] loc = new int[2];
+        for (View v : mSlideButtons.keySet()) {
+            v.getLocationOnScreen(loc);
+            if (rawX >= loc[0] && rawX < loc[0] + v.getWidth() && rawY >= loc[1] && rawY < loc[1] + v.getHeight())
+                return v;
+        }
+        return null;
+    }
 
     public void onExtraKeyButtonClick(View view, ExtraKeyButton buttonInfo, MaterialButton button) {
         if (mExtraKeysViewClient != null)

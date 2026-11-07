@@ -112,8 +112,13 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
                 false, false, false, false);
             return;
         }
+        ComposeOverlay compose = mActivity.getComposeOverlay();
+        if ("ESC".equals(key) && compose != null && compose.isOpen()) {
+            compose.close();   // ESC while composing = close, draft kept (never sent to the shell)
+            return;
+        }
         if ("COMPOSE".equals(key)) {
-            if (mActivity.getComposeOverlay() != null) mActivity.getComposeOverlay().toggle();
+            if (compose != null) compose.composeKey();
         } else if ("MIC".equals(key)) {
             // Phone dictation waits for grill-dictation (docs/phone SPEC Stage 1 step 4).
             mActivity.showToast("Dictation isn't built yet", false);

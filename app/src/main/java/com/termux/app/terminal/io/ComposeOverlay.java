@@ -7,7 +7,6 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
@@ -19,11 +18,12 @@ import com.termux.terminal.TerminalSession;
 /**
  * Multi-line compose box (fork, docs/phone SPEC Stage 1 step 1).
  *
- * Opened and closed by the two-rows-tall ✎ key. An overlay at the top of the screen, black at
- * ~80 % so the terminal shows faintly through. A plain Android EditText, so Gboard works fully
- * there, autocorrect included; Enter is a new line. Send writes the whole text as ONE bracketed
- * paste followed by Enter, so bash, nvim and Claude Code take it as one input. Back, ✎ again or
- * Send closes it; closing without Send keeps the draft.
+ * Opened by the two-rows-tall ✎ key. An overlay at the top of the screen, black at ~80 % so the
+ * terminal shows faintly through. A plain Android EditText, so Gboard works fully there,
+ * autocorrect included; Enter is a new line. ✎ again sends the text as ONE bracketed paste, so
+ * bash, nvim and Claude Code take it as one input. There is no automatic Enter: text that ends
+ * in a line break is pasted without it and then run (Enter); other text only lands on the command
+ * line. ESC on the bar (or Back) closes it and keeps the draft. (User's notes, docs/phone 11-07.)
  */
 public class ComposeOverlay {
 
@@ -33,7 +33,6 @@ public class ComposeOverlay {
     private static final int BG = 0xCC000000;
     private static final int FG = 0xFFC0CAF5;
     private static final int HINT = 0xFF565F89;
-    private static final int ACCENT = 0xFF7AA2F7;
 
     private final TermuxActivity mActivity;
     private final LinearLayout mRoot;
@@ -61,32 +60,16 @@ public class ComposeOverlay {
         mEdit.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
         mEdit.setTextColor(FG);
         mEdit.setHintTextColor(HINT);
-        mEdit.setHint("Compose…  (Send = paste + Enter)");
+        mEdit.setHint("✎ sends · ESC keeps the draft · end with a new line to run it");
         mEdit.setBackgroundColor(Color.TRANSPARENT);
         mRoot.addView(mEdit, new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        LinearLayout buttons = new LinearLayout(activity);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setGravity(Gravity.END);
-        buttons.addView(button("Back", HINT, v -> close()));
-        buttons.addView(button("Send", ACCENT, v -> send()));
-        mRoot.addView(buttons, new LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         RelativeLayout.LayoutParams lp = new RelativeLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.addRule(RelativeLayout.ALIGN_PARENT_TOP);
         parent.addView(mRoot, lp);
-    }
-
-    private Button button(String text, int color, View.OnClickListener onClick) {
-        Button b = new Button(mActivity, null, android.R.attr.buttonBarButtonStyle);
-        b.setText(text);
-        b.setAllCaps(false);
-        b.setTextColor(color);
-        b.setOnClickListener(onClick);
-        return b;
     }
 
     private int dp(int v) {
@@ -97,8 +80,9 @@ public class ComposeOverlay {
         return mRoot.getVisibility() == View.VISIBLE;
     }
 
-    public void toggle() {
-        if (isOpen()) close(); else open();
+    /** The ✎ key: open the box, or send it if it is open. */
+    public void composeKey() {
+        if (isOpen()) send(); else open();
     }
 
     public void open() {
@@ -114,15 +98,25 @@ public class ComposeOverlay {
         if (mActivity.getTerminalView() != null) mActivity.getTerminalView().requestFocus();
     }
 
-    /** One bracketed paste, then Enter. */
+    /** Send the draft (see {@link #output}) and close. An empty box just closes. */
     private void send() {
         TerminalSession session = mActivity.getCurrentSession();
-        String text = mEdit.getText().toString();
+        String out = output(mEdit.getText().toString());
         if (session == null || !session.isRunning()) { close(); return; }
-        if (!text.isEmpty()) session.write(bracketedPaste(text));
-        session.write("\r");
+        if (!out.isEmpty()) session.write(out);
         mEdit.setText("");
         close();
+    }
+
+    /**
+     * What ✎ writes for a draft: one bracketed paste, and Enter only when the text ends in a line
+     * break (that last break is not pasted, it becomes the Enter). Empty or only "\n" = "" / "\r".
+     */
+    static String output(String text) {
+        String t = text.replace("\r\n", "\n");
+        boolean run = t.endsWith("\n");
+        if (run) t = t.substring(0, t.length() - 1);
+        return (t.isEmpty() ? "" : bracketedPaste(t)) + (run ? "\r" : "");
     }
 
     /**
