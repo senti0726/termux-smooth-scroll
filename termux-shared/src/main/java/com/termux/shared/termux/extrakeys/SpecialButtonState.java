@@ -16,6 +16,9 @@ public class SpecialButtonState {
      * state is read. */
     boolean isLocked = false;
 
+    /** When this key was last tapped, for double-tap-to-lock. */
+    long lastTapMs = 0;
+
     List<MaterialButton> buttons = new ArrayList<>();
 
     ExtraKeysView mExtraKeysView;
@@ -46,6 +49,10 @@ public class SpecialButtonState {
     /** Set {@link #isLocked}. */
     public void setIsLocked(boolean value) {
         isLocked = value;
+        // A locked key keeps a lit background so "locked" and "next key only" look different.
+        for (MaterialButton button : buttons) {
+            button.setBackgroundColor(value ? mExtraKeysView.getButtonActiveBackgroundColor() : mExtraKeysView.getButtonBackgroundColor());
+        }
     }
 
 }

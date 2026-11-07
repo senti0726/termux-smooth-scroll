@@ -28,7 +28,9 @@ public class TerminalToolbarViewPager {
 
         @Override
         public int getCount() {
-            return 2;
+            // Fork: no swipe to the one-line text row. That swipe kept grabbing the cursor; the
+            // ✎ key's compose box replaces it (docs/phone SPEC Stage 1).
+            return 1;
         }
 
         @Override
@@ -46,6 +48,9 @@ public class TerminalToolbarViewPager {
                 ExtraKeysView extraKeysView = (ExtraKeysView) layout;
                 extraKeysView.setExtraKeysViewClient(mActivity.getTermuxTerminalExtraKeys());
                 extraKeysView.setButtonTextAllCaps(mActivity.getProperties().shouldExtraKeysTextBeAllCaps());
+                // Fork: held arrows (hjkl) repeat after ~300 ms at ~30/s.
+                extraKeysView.setLongPressTimeout(300);
+                extraKeysView.setLongPressRepeatDelay(33);
                 mActivity.setExtraKeysView(extraKeysView);
                 extraKeysView.reload(mActivity.getTermuxTerminalExtraKeys().getExtraKeysInfo(),
                     mActivity.getTerminalToolbarDefaultHeight());

@@ -31,6 +31,7 @@ import com.termux.app.api.file.FileReceiverActivity;
 import com.termux.app.terminal.TermuxActivityRootView;
 import com.termux.app.terminal.TermuxTerminalSessionActivityClient;
 import com.termux.app.terminal.io.TermuxTerminalExtraKeys;
+import com.termux.app.terminal.io.ComposeOverlay;
 import com.termux.shared.activities.ReportActivity;
 import com.termux.shared.activity.ActivityUtils;
 import com.termux.shared.activity.media.AppCompatActivityUtils;
@@ -174,6 +175,9 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     private int mNavBarHeight;
 
     private float mTerminalToolbarDefaultHeight;
+
+    /** Fork: the multi-line compose box opened by the ✎ key. */
+    private ComposeOverlay mComposeOverlay;
 
 
     private static final int CONTEXT_MENU_SELECT_URL_ID = 0;
@@ -525,6 +529,12 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
         terminalToolbarViewPager.setAdapter(new TerminalToolbarViewPager.PageAdapter(this, savedTextInput));
         terminalToolbarViewPager.addOnPageChangeListener(new TerminalToolbarViewPager.OnPageChangeListener(this, terminalToolbarViewPager));
+
+        mComposeOverlay = new ComposeOverlay(this, findViewById(R.id.activity_termux_root_relative_layout));
+    }
+
+    public ComposeOverlay getComposeOverlay() {
+        return mComposeOverlay;
     }
 
     private void setTerminalToolbarHeight() {
@@ -603,6 +613,8 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     public void onBackPressed() {
         if (getDrawer().isDrawerOpen(Gravity.LEFT)) {
             getDrawer().closeDrawers();
+        } else if (mComposeOverlay != null && mComposeOverlay.isOpen()) {
+            mComposeOverlay.close();
         } else {
             finishActivityIfNotFinishing();
         }

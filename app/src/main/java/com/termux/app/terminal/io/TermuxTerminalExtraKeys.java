@@ -13,6 +13,8 @@ import com.termux.app.terminal.TermuxTerminalViewClient;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.extrakeys.ExtraKeysConstants;
 import com.termux.shared.termux.extrakeys.ExtraKeysInfo;
+import com.termux.shared.termux.extrakeys.ExtraKeysView;
+import com.termux.shared.termux.extrakeys.SpecialButton;
 import com.termux.shared.termux.settings.properties.TermuxPropertyConstants;
 import com.termux.shared.termux.settings.properties.TermuxSharedProperties;
 import com.termux.shared.termux.terminal.io.TerminalExtraKeys;
@@ -81,10 +83,41 @@ public class TermuxTerminalExtraKeys extends TerminalExtraKeys {
         return mExtraKeysInfo;
     }
 
+    /** Fork: the bar's arrows are hjkl in disguise (docs/phone SPEC Stage 1 step 5). */
+    static String arrowLetter(String key) {
+        switch (key) {
+            case "LEFT": return "h";
+            case "DOWN": return "j";
+            case "UP": return "k";
+            case "RIGHT": return "l";
+            default: return null;
+        }
+    }
+
     @SuppressLint("RtlHardcoded")
     @Override
     public void onTerminalExtraKeyButtonClick(View view, String key, boolean ctrlDown, boolean altDown, boolean shiftDown, boolean fnDown) {
-        if ("KEYBOARD".equals(key)) {
+        String letter = arrowLetter(key);
+        if (letter != null && !ctrlDown && !altDown && !shiftDown && !fnDown) {
+            // Sticky CTRL + arrow = a real arrow key; CTRL is consumed here (unless locked), never
+            // sent on as Ctrl+h. Without CTRL, the arrow types its letter.
+            ExtraKeysView ekv = mActivity.getExtraKeysView();
+            Boolean ctrl = ekv == null ? null : ekv.readSpecialButton(SpecialButton.CTRL, true);
+            if (Boolean.TRUE.equals(ctrl)) {
+                super.onTerminalExtraKeyButtonClick(view, key, false, false, false, false);
+                return;
+            }
+            Boolean shift = ekv == null ? null : ekv.readSpecialButton(SpecialButton.SHIFT, true);
+            super.onTerminalExtraKeyButtonClick(view, Boolean.TRUE.equals(shift) ? letter.toUpperCase() : letter,
+                false, false, false, false);
+            return;
+        }
+        if ("COMPOSE".equals(key)) {
+            if (mActivity.getComposeOverlay() != null) mActivity.getComposeOverlay().toggle();
+        } else if ("MIC".equals(key)) {
+            // Phone dictation waits for grill-dictation (docs/phone SPEC Stage 1 step 4).
+            mActivity.showToast("Dictation isn't built yet", false);
+        } else if ("KEYBOARD".equals(key)) {
             if(mTermuxTerminalViewClient != null)
                 mTermuxTerminalViewClient.onToggleSoftKeyboardRequest();
         } else if ("DRAWER".equals(key)) {

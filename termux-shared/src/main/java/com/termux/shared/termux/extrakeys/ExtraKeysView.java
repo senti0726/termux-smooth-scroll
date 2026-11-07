@@ -129,6 +129,12 @@ public final class ExtraKeysView extends GridLayout {
 
 
 
+    /** Two taps on a sticky key (CTRL, SHIFT, ...) this close together lock it. */
+    public static final int DOUBLE_TAP_LOCK_MS = 350;
+
+    /** A key with this name that appears in two rows of the same column is drawn once, two rows tall. */
+    public static final String TALL_KEY = "COMPOSE";
+
     /** Defines the minimum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
     public static final int MIN_LONG_PRESS_DURATION = 200;
     /** Defines the maximum allowed duration in milliseconds for {@link #mLongPressTimeout}. */
@@ -354,7 +360,7 @@ public final class ExtraKeysView extends GridLayout {
 
     /** Set {@link #mLongPressRepeatDelay}. */
     public void setLongPressRepeatDelay(int longPressRepeatDelay) {
-        if (mLongPressRepeatDelay >= MIN_LONG_PRESS__REPEAT_DELAY && mLongPressRepeatDelay <= MAX_LONG_PRESS__REPEAT_DELAY) {
+        if (longPressRepeatDelay >= MIN_LONG_PRESS__REPEAT_DELAY && longPressRepeatDelay <= MAX_LONG_PRESS__REPEAT_DELAY) {
             mLongPressRepeatDelay = longPressRepeatDelay;
         } else {
             mLongPressRepeatDelay = DEFAULT_LONG_PRESS_REPEAT_DELAY;
@@ -400,6 +406,11 @@ public final class ExtraKeysView extends GridLayout {
         for (int row = 0; row < buttons.length; row++) {
             for (int col = 0; col < buttons[row].length; col++) {
                 final ExtraKeyButton buttonInfo = buttons[row][col];
+                if (row > 0 && TALL_KEY.equals(buttonInfo.getKey()) && col < buttons[row - 1].length
+                    && TALL_KEY.equals(buttons[row - 1][col].getKey()))
+                    continue;   // drawn by the row above, two rows tall
+                final int rowSpan = (TALL_KEY.equals(buttonInfo.getKey()) && row + 1 < buttons.length
+                    && col < buttons[row + 1].length && TALL_KEY.equals(buttons[row + 1][col].getKey())) ? 2 : 1;
 
                 MaterialButton button;
                 if (isSpecialButton(buttonInfo)) {
@@ -478,7 +489,7 @@ public final class ExtraKeysView extends GridLayout {
                 }
                 param.setMargins(0, 0, 0, 0);
                 param.columnSpec = GridLayout.spec(col, GridLayout.FILL, 1.f);
-                param.rowSpec = GridLayout.spec(row, GridLayout.FILL, 1.f);
+                param.rowSpec = GridLayout.spec(row, rowSpan, GridLayout.FILL, rowSpan);
                 button.setLayoutParams(param);
 
                 addView(button);
@@ -522,10 +533,19 @@ public final class ExtraKeysView extends GridLayout {
             SpecialButtonState state = mSpecialButtons.get(SpecialButton.valueOf(buttonInfo.getKey()));
             if (state == null) return;
 
-            // Toggle active state and disable lock state if new state is not active
-            state.setIsActive(!state.isActive);
-            if (!state.isActive)
-                state.setIsLocked(false);
+            // Tap = next key only. A second tap within DOUBLE_TAP_LOCK_MS locks it; a tap on a
+            // locked key releases it.
+            long now = android.os.SystemClock.uptimeMillis();
+            boolean doubleTap = state.isActive && !state.isLocked
+                && now - state.lastTapMs <= DOUBLE_TAP_LOCK_MS;
+            state.lastTapMs = now;
+            if (doubleTap) {
+                state.setIsLocked(true);
+            } else {
+                state.setIsActive(!state.isActive);
+                if (!state.isActive)
+                    state.setIsLocked(false);
+            }
         } else {
             onExtraKeyButtonClick(view, buttonInfo, button);
         }
