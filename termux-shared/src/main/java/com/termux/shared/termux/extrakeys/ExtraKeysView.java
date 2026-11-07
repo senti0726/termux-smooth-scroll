@@ -526,6 +526,9 @@ public final class ExtraKeysView extends GridLayout {
     private boolean onSlideTouch(View view, MotionEvent event) {
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
+                // The bar lives in a ViewPager, which steals a sideways drag (even with one page)
+                // and cancels the touch: the slide from ↓ to → stopped dead after ~0.6 s (11-07).
+                if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
                 slideTo(view);
                 return true;
             case MotionEvent.ACTION_MOVE: {
