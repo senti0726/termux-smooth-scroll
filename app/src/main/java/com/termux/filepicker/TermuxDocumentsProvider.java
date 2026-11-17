@@ -17,8 +17,8 @@ import com.termux.shared.termux.TermuxConstants;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.util.ArrayDeque;
 import java.util.Collections;
-import java.util.LinkedList;
 
 /**
  * A document provider for the Storage Access Framework which exposes the files in the
@@ -161,12 +161,14 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         // results, so we can stop as soon as we find a sufficient number of matches.  Other
         // implementations might rank results and use other data about files, rather than the file
         // name, to produce a match.
-        final LinkedList<File> pending = new LinkedList<>();
+        final ArrayDeque<File> pending = new ArrayDeque<>();
         pending.add(parent);
 
         final int MAX_SEARCH_RESULTS = 50;
         while (!pending.isEmpty() && result.getCount() < MAX_SEARCH_RESULTS) {
-            final File file = pending.removeFirst();
+            // poll(), not LinkedList.removeFirst(): against API 35+ that resolves to
+            // List.removeFirst(), which desugaring maps to a j$ method that doesn't exist.
+            final File file = pending.poll();
             // Avoid directories outside the $HOME directory linked with symlinks (to avoid e.g. search
             // through the whole SD card).
             boolean isInsideHome;
@@ -177,7 +179,8 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             }
             if (isInsideHome) {
                 if (file.isDirectory()) {
-                    Collections.addAll(pending, file.listFiles());
+                    final File[] children = file.listFiles();
+                    if (children != null) Collections.addAll(pending, children);
                 } else {
                     if (file.getName().toLowerCase().contains(query)) {
                         includeFile(result, null, file);
