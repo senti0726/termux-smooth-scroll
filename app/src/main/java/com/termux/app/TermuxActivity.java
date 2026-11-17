@@ -200,6 +200,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        com.termux.view.FreezeProbe.lifecycle(this, "onCreate");
         Logger.logDebug(LOG_TAG, "onCreate");
         mIsOnResumeAfterOnCreate = true;
 
@@ -286,6 +287,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onStart() {
         super.onStart();
+        com.termux.view.FreezeProbe.lifecycle(this, "onStart");
 
         Logger.logDebug(LOG_TAG, "onStart");
 
@@ -308,6 +310,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onResume() {
         super.onResume();
+        com.termux.view.FreezeProbe.lifecycle(this, "onResume");
 
         Logger.logVerbose(LOG_TAG, "onResume");
 
@@ -329,6 +332,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     protected void onStop() {
         super.onStop();
+        com.termux.view.FreezeProbe.lifecycle(this, "onStop");
 
         Logger.logDebug(LOG_TAG, "onStop");
 
@@ -351,6 +355,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
     @Override
     public void onDestroy() {
         super.onDestroy();
+        com.termux.view.FreezeProbe.lifecycle(this, "onDestroy");
 
         Logger.logDebug(LOG_TAG, "onDestroy");
 
@@ -389,6 +394,7 @@ public final class TermuxActivity extends AppCompatActivity implements ServiceCo
      */
     @Override
     public void onServiceConnected(ComponentName componentName, IBinder service) {
+        com.termux.view.FreezeProbe.lifecycle(this, "onServiceConnected");
         Logger.logDebug(LOG_TAG, "onServiceConnected");
 
         mTermuxService = ((TermuxService.LocalBinder) service).service;

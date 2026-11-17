@@ -266,6 +266,9 @@ public final class TerminalView extends View {
 
     private static final String LOG_TAG = "TerminalView";
 
+    /** Temporary frozen-screen diagnostics, see {@link FreezeProbe}. */
+    final FreezeProbe mFreezeProbe = new FreezeProbe(this);
+
     public TerminalView(Context context, AttributeSet attributes) { // NO_UCD (unused code)
         super(context, attributes);
         mGestureRecognizer = new GestureAndScaleRecognizer(context, new GestureAndScaleRecognizer.Listener() {
@@ -435,6 +438,7 @@ public final class TerminalView extends View {
         if (session == mTermSession) return false;
 
         mTermSession = session;
+        mFreezeProbe.event("attachSession");
         mEmulator = null;
         mCombiningAccent = 0;
         clearQueuedAppScroll();
@@ -603,6 +607,7 @@ public final class TerminalView extends View {
     }
 
     public void onScreenUpdated(boolean skipScrolling) {
+        mFreezeProbe.onScreenUpdated();
         if (mEmulator == null) return;
 
         if (mAppScrollAwaitingOutput) {
@@ -1250,7 +1255,27 @@ public final class TerminalView extends View {
      */
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+        mFreezeProbe.event("sizeChanged " + oldw + "x" + oldh + "->" + w + "x" + h);
         updateSize();
+    }
+
+    @Override
+    public void invalidate() {
+        // Null while View's own constructor runs, before this class's fields are set.
+        if (mFreezeProbe != null) mFreezeProbe.onInvalidate();
+        super.invalidate();
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+        mFreezeProbe.event("windowVisibilityChanged " + visibility);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasWindowFocus) {
+        super.onWindowFocusChanged(hasWindowFocus);
+        mFreezeProbe.event("windowFocusChanged " + hasWindowFocus);
     }
 
     /** Check if the terminal size in rows and columns should be updated. */
@@ -1295,6 +1320,7 @@ public final class TerminalView extends View {
 
     @Override
     protected void onDraw(Canvas canvas) {
+        mFreezeProbe.onDraw();
         if (mEmulator == null) {
             canvas.drawColor(0XFF000000);
         } else {
@@ -1987,6 +2013,7 @@ public final class TerminalView extends View {
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
+        mFreezeProbe.onAttached();
 
         if (mTextSelectionCursorController != null) {
             getViewTreeObserver().addOnTouchModeChangeListener(mTextSelectionCursorController);
@@ -1996,6 +2023,7 @@ public final class TerminalView extends View {
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        mFreezeProbe.onDetached();
 
         if (mTextSelectionCursorController != null) {
             // Might solve the following exception

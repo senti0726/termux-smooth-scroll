@@ -116,9 +116,13 @@ public class TermuxTerminalSessionActivityClient extends TermuxTerminalSessionCl
 
     @Override
     public void onTextChanged(@NonNull TerminalSession changedSession) {
-        if (!mActivity.isVisible()) return;
+        if (!mActivity.isVisible()) {
+            com.termux.view.FreezeProbe.noteDropped(true);
+            return;
+        }
 
         if (mActivity.getCurrentSession() == changedSession) mActivity.getTerminalView().onScreenUpdated();
+        else com.termux.view.FreezeProbe.noteDropped(false);
     }
 
     @Override
