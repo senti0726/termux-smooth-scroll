@@ -40,6 +40,22 @@ public class TerminalTest extends TerminalTestCase {
 		assertForegroundColorAt(2, 0, 115);
 	}
 
+	public void testAnyEventMouseTracking() throws Exception {
+		// tmux enables only 1003 (+1006) when a pane asks for hover; it must count as tracking so
+		// the wheel goes to the app as wheel reports, not as arrow keys.
+		withTerminalSized(10, 10);
+		enterString("\033[?1049h\033[?1003h\033[?1006h");
+		assertTrue(mTerminal.isMouseTrackingActive());
+		mTerminal.sendMouseEvent(TerminalEmulator.MOUSE_WHEELUP_BUTTON, 3, 4, true);
+		assertEquals("\033[<64;3;4M", mOutput.getOutputAndClear());
+		mTerminal.sendMouseEvent(TerminalEmulator.MOUSE_LEFT_BUTTON_MOVED, 3, 5, true);
+		assertEquals("\033[<32;3;5M", mOutput.getOutputAndClear());
+		enterString("\033[?1003l");
+		assertFalse(mTerminal.isMouseTrackingActive());
+		enterString("\033[?1000h\033[?1003h");
+		assertTrue(mTerminal.isMouseTrackingActive());
+	}
+
 	public void testMouseClick() throws Exception {
 		withTerminalSized(10, 10);
 		assertFalse(mTerminal.isMouseTrackingActive());

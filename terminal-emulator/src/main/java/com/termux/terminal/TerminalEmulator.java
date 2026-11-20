@@ -484,6 +484,12 @@ public final class TerminalEmulator {
                 return DECSET_BIT_MOUSE_TRACKING_PRESS_RELEASE;
             case 1002:
                 return DECSET_BIT_MOUSE_TRACKING_BUTTON_EVENT;
+            case 1003:
+                // Any-event tracking: also reports motion with no button held. A touch screen has no
+                // hover, so this is button-event tracking here. Ignoring it left tmux, which asks for
+                // only 1003 when a pane such as Claude Code wants hover, with mouse tracking off: swipes
+                // became Up/Down keys and walked Claude Code's prompt history.
+                return DECSET_BIT_MOUSE_TRACKING_BUTTON_EVENT;
             case 1004:
                 return DECSET_BIT_SEND_FOCUS_EVENTS;
             case 1006:
