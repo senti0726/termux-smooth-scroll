@@ -46,6 +46,8 @@ public final class RepaintScrollDetector {
 
     private int mTop, mBottom, mLeft, mRight;
     private int mFoundShift, mFoundScore;
+    /** Rows with a visible glyph that changed, in the last {@link #detect}. */
+    private int mChangedRows;
     /** The screen's rows during {@link #detect}. */
     private TerminalRow[] mLines = new TerminalRow[0];
     private long[] mWholeHashes = new long[0], mPreviousWholeHashes = new long[0];
@@ -118,6 +120,7 @@ public final class RepaintScrollDetector {
      * happened in are {@link #getTop()} to {@link #getBottom()}.
      */
     public int detect(TerminalBuffer screen, int direction) {
+        mChangedRows = 0;
         if (!mHasSnapshot || direction == 0 || screen != mScreen
             || screen.mScreenRows != mRows || screen.mColumns != mColumns) return 0;
 
@@ -192,6 +195,7 @@ public final class RepaintScrollDetector {
             }
             if (isEvidence(row)) changed++;
         }
+        if (!band) mChangedRows = changed;
         if (changed < MIN_MATCHING_ROWS) return false;
 
         int bestShift = 0, bestMatches = 0;
@@ -259,6 +263,15 @@ public final class RepaintScrollDetector {
     private static char charAt(TerminalRow line, int column) {
         final int index = line.findStartOfColumn(column);
         return index < line.getSpaceUsed() ? line.mText[index] : ' ';
+    }
+
+    /**
+     * Rows that hold a visible glyph and differ from the snapshot, as of the last {@link #detect}
+     * (whole rows). Tells a repaint that found no shift because little changed from one that
+     * replaced most of the screen.
+     */
+    public int getChangedRows() {
+        return mChangedRows;
     }
 
     /** The first column of the last scroll found. */

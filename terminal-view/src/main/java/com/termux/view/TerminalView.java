@@ -114,6 +114,18 @@ public final class TerminalView extends View {
     MotionEvent mQueuedAppScrollEvent;
     /** Whether rows were sent and the app has not produced output since. */
     boolean mAppScrollAwaitingOutput;
+    /**
+     * The app's rows moved per wheel event (or arrow key), learned from the repaints that answer a
+     * batch: about 1 in nvim, 3 in nvim during a flick (its mousescroll coarsens), 16 in Claude
+     * Code. It sizes batches so one answer moves less than a screen, which is what lets the repaint
+     * detector find the shift and glide it; a bigger batch comes back as a jump with nothing in
+     * common with the screen before it. Starts at the flick value, the common worst case.
+     */
+    float mAppScrollRowsPerEvent = 3;
+    /** Rows (events) sent in the last batch that no repaint has been matched against yet, 0 if none. */
+    int mAppScrollBatchAwaitingMatch;
+    /** The most an answered batch should move, as a share of the screen's rows. */
+    static final float APP_SCROLL_BATCH_SCREEN_SHARE = 0.6f;
     /** How long to wait for an app to answer before sending the queued rows anyway. */
     static final int APP_SCROLL_RESPONSE_TIMEOUT_MS = 100;
     private final Runnable mAppScrollResponseTimeout = new Runnable() {
@@ -704,6 +716,7 @@ public final class TerminalView extends View {
             } else if (now - mLastAppScrollEventTime >= REPAINT_QUIET_AFTER_SCROLL_EVENT_MS
                 && mRegionScrollAnimation.isRecording() && mTopRow == 0 && mTopRowPixelOffset == 0) {
                 final int rows = mRepaintScrollDetector.detect(mEmulator.getScreen(), mAppScrollDirection);
+                learnAppScrollRowsPerEvent(rows, mRepaintScrollDetector.getChangedRows());
                 if (rows != 0) {
                     mRegionScrollAnimation.onRegionRepainted(mEmulator.getScreen(), mRepaintScrollDetector.getSnapshotRows(),
                         rows, mRepaintScrollDetector.getTop(), mRepaintScrollDetector.getBottom(), mRepaintScrollDetector.getLeft(), mRepaintScrollDetector.getRight());
@@ -842,19 +855,49 @@ public final class TerminalView extends View {
 
     /** Send the queued rows, and wait for the app to answer before sending more. */
     void flushQueuedAppScroll() {
-        final int rows = mQueuedAppScrollRows;
-        mQueuedAppScrollRows = 0;
-        if (rows == 0 || mEmulator == null || mQueuedAppScrollEvent == null || !isScrollHandledByApp()) return;
+        final int queued = mQueuedAppScrollRows;
+        if (queued == 0 || mEmulator == null || mQueuedAppScrollEvent == null || !isScrollHandledByApp()) {
+            mQueuedAppScrollRows = 0;
+            return;
+        }
+        // At most what keeps one answer's move under a screen; the rest waits for that answer.
+        final int batch = appScrollBatchLimit();
+        final int rows = Math.max(-batch, Math.min(batch, queued));
+        mQueuedAppScrollRows = queued - rows;
+        mAppScrollBatchAwaitingMatch = Math.abs(rows);
         sendScrollRows(mQueuedAppScrollEvent, rows);
         mAppScrollAwaitingOutput = true;
         removeCallbacks(mAppScrollResponseTimeout);
         postDelayed(mAppScrollResponseTimeout, APP_SCROLL_RESPONSE_TIMEOUT_MS);
     }
 
+    /** The most wheel events (or arrow keys) to send in one batch, see {@link #mAppScrollRowsPerEvent}. */
+    int appScrollBatchLimit() {
+        final float rows = Math.min(RepaintScrollDetector.DEFAULT_MAX_SHIFT_ROWS, mEmulator.mRows * APP_SCROLL_BATCH_SCREEN_SHARE);
+        return Math.max(1, (int) (rows / mAppScrollRowsPerEvent));
+    }
+
+    /** Learn rows per event from how far the repaint answering the last batch moved, see {@link #mAppScrollRowsPerEvent}. */
+    void learnAppScrollRowsPerEvent(int rowsMoved, int rowsChanged) {
+        final int events = mAppScrollBatchAwaitingMatch;
+        if (events == 0) return;
+        if (rowsMoved != 0) {
+            mAppScrollBatchAwaitingMatch = 0;
+            mAppScrollRowsPerEvent = Math.max(1f, Math.min(RepaintScrollDetector.DEFAULT_MAX_SHIFT_ROWS, Math.abs(rowsMoved) / (float) events));
+        } else if (rowsChanged * 2 >= mEmulator.mRows) {
+            // Most of the screen was replaced and no shift explains it: the batch most likely moved
+            // further than the screen. Halve the next one. A small repaint (the cursor, a status
+            // line) is not the answer yet, so it keeps waiting.
+            mAppScrollBatchAwaitingMatch = 0;
+            if (events > 1) mAppScrollRowsPerEvent = Math.min(RepaintScrollDetector.DEFAULT_MAX_SHIFT_ROWS, mAppScrollRowsPerEvent * 2);
+        }
+    }
+
     /** Forget queued rows, e.g. when the session changes. */
     void clearQueuedAppScroll() {
         mQueuedAppScrollRows = 0;
         mAppScrollAwaitingOutput = false;
+        mAppScrollBatchAwaitingMatch = 0;
         removeCallbacks(mAppScrollResponseTimeout);
     }
 
@@ -878,7 +921,12 @@ public final class TerminalView extends View {
         final int action = event.getAction();
 
         // A finger on the screen catches a smooth fling, like any scrolling list.
-        if (action == MotionEvent.ACTION_DOWN) stopPixelScroller();
+        // Rows the app has not been sent yet stop too: batches are capped, so a fling's last rows
+        // can still be queued after it ends.
+        if (action == MotionEvent.ACTION_DOWN) {
+            stopPixelScroller();
+            mQueuedAppScrollRows = 0;
+        }
 
         if (isSelectingText()) {
             updateFloatingToolbarVisibility(event);

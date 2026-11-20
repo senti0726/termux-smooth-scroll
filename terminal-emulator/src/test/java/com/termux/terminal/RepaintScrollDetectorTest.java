@@ -81,6 +81,8 @@ public class RepaintScrollDetectorTest extends TerminalTestCase {
         for (int i = 0; i < ROWS; i++) lines[i] = "other " + i;
         paint(lines);
         assertEquals(0, mDetector.detect(mTerminal.getScreen(), 1));
+        // Every row was replaced: how the view tells a too-far scroll from a small repaint.
+        assertEquals(ROWS, mDetector.getChangedRows());
     }
 
     public void testUnchangedScreenIsNotAScroll() {
@@ -94,6 +96,7 @@ public class RepaintScrollDetectorTest extends TerminalTestCase {
         setUpTranscript(10);
         enterString("\033[10;1Hnew a\033[K\033[11;1Hnew b\033[K");
         assertEquals(0, mDetector.detect(mTerminal.getScreen(), 1));
+        assertEquals(2, mDetector.getChangedRows());
     }
 
     public void testBlankRowsAreNoEvidence() {
