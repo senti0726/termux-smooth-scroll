@@ -104,19 +104,70 @@ public class RepaintScrollDetectorTest extends TerminalTestCase {
         assertEquals(0, mDetector.detect(mTerminal.getScreen(), 1));
     }
 
-    public void testSideBySidePaneScrollIsNotAnimated() {
-        // The left pane scrolls, the right one does not: no whole row moved.
+    public void testSideBySidePaneScrollGlidesOnlyThatPane() {
+        // The left pane scrolls, the right one does not: no whole row moved, but the band left of
+        // the border did, so only those columns glide.
         withTerminalSized(20, ROWS);
         String[] before = new String[ROWS], after = new String[ROWS];
         for (int i = 0; i < ROWS; i++) {
-            before[i] = String.format("L%-8d|R%d", i, i);
-            after[i] = String.format("L%-8d|R%d", i + 2, i);
+            before[i] = String.format("L%-8d\u2502R%d", i, i);
+            after[i] = String.format("L%-8d\u2502R%d", i + 2, i);
+        }
+        paint(before);
+        mDetector = new RepaintScrollDetector();
+        mDetector.snapshot(mTerminal.getScreen());
+        paint(after);
+        assertEquals(2, mDetector.detect(mTerminal.getScreen(), 1));
+        assertEquals(0, mDetector.getLeft());
+        assertEquals(9, mDetector.getRight());
+        assertEquals(0, mDetector.getTop());
+        assertEquals(ROWS - 1, mDetector.getBottom());
+    }
+
+    public void testRedrawBesideABorderIsNotAScroll() {
+        withTerminalSized(20, ROWS);
+        String[] before = new String[ROWS], after = new String[ROWS];
+        for (int i = 0; i < ROWS; i++) {
+            before[i] = String.format("a%-8d\u2502R%d", i * 7, i);
+            after[i] = String.format("b%-8d\u2502R%d", i * 5, i);
         }
         paint(before);
         mDetector = new RepaintScrollDetector();
         mDetector.snapshot(mTerminal.getScreen());
         paint(after);
         assertEquals(0, mDetector.detect(mTerminal.getScreen(), 1));
+    }
+
+    /** nvim with relativenumber, the cursor pinned to the bottom edge: numbers hold still, text moves. */
+    private void paintRelativeNumbers(int first) {
+        String[] lines = new String[ROWS];
+        for (int i = 0; i < ROWS - 1; i++) lines[i] = String.format("%3d text %d", ROWS - 2 - i, first + i);
+        lines[ROWS - 1] = "NORMAL file.md";
+        paint(lines);
+    }
+
+    public void testRelativeLineNumbersHoldStillWhileTextMoves() {
+        withTerminalSized(30, ROWS);
+        paintRelativeNumbers(10);
+        mDetector = new RepaintScrollDetector();
+        mDetector.snapshot(mTerminal.getScreen());
+        paintRelativeNumbers(13);
+        assertEquals(3, mDetector.detect(mTerminal.getScreen(), 1));
+        // The number column (3 digits) is left out of the glide; the text right of it moves.
+        assertEquals(3, mDetector.getLeft());
+        assertEquals(30, mDetector.getRight());
+        assertEquals(0, mDetector.getTop());
+        assertEquals(ROWS - 1, mDetector.getBottom());
+    }
+
+    public void testRelativeLineNumbersScrollUpToo() {
+        withTerminalSized(30, ROWS);
+        paintRelativeNumbers(10);
+        mDetector = new RepaintScrollDetector();
+        mDetector.snapshot(mTerminal.getScreen());
+        paintRelativeNumbers(6);
+        assertEquals(-4, mDetector.detect(mTerminal.getScreen(), -1));
+        assertEquals(3, mDetector.getLeft());
     }
 
     public void testOtherBufferOrSizeFindsNothing() {
