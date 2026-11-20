@@ -119,9 +119,15 @@ public final class TerminalView extends View {
      * batch: about 1 in nvim, 3 in nvim during a flick (its mousescroll coarsens), 16 in Claude
      * Code. It sizes batches so one answer moves less than a screen, which is what lets the repaint
      * detector find the shift and glide it; a bigger batch comes back as a jump with nothing in
-     * common with the screen before it. Starts at the flick value, the common worst case.
+     * common with the screen before it. Never below {@link #APP_SCROLL_MIN_ROWS_PER_EVENT}.
      */
-    float mAppScrollRowsPerEvent = 3;
+    float mAppScrollRowsPerEvent = APP_SCROLL_MIN_ROWS_PER_EVENT;
+    /**
+     * The least rows per event assumed. A batch reaches the app as a burst, which nvim (scroll.lua)
+     * takes for a flick and scrolls 3 rows an event, even when the drag before it measured 1: a
+     * learned 1 sized the next batch at 45 events, which moved 135 rows (phone capture m3).
+     */
+    static final float APP_SCROLL_MIN_ROWS_PER_EVENT = 3;
     /** Rows (events) sent in the last batch that no repaint has been matched against yet, 0 if none. */
     int mAppScrollBatchAwaitingMatch;
     /** The most an answered batch should move, as a share of the screen's rows. */
@@ -883,7 +889,7 @@ public final class TerminalView extends View {
         if (events == 0) return;
         if (rowsMoved != 0) {
             mAppScrollBatchAwaitingMatch = 0;
-            mAppScrollRowsPerEvent = Math.max(1f, Math.min(RepaintScrollDetector.DEFAULT_MAX_SHIFT_ROWS, Math.abs(rowsMoved) / (float) events));
+            mAppScrollRowsPerEvent = Math.max(APP_SCROLL_MIN_ROWS_PER_EVENT, Math.min(RepaintScrollDetector.DEFAULT_MAX_SHIFT_ROWS, Math.abs(rowsMoved) / (float) events));
         } else if (rowsChanged * 2 >= mEmulator.mRows) {
             // Most of the screen was replaced and no shift explains it: the batch most likely moved
             // further than the screen. Halve the next one. A small repaint (the cursor, a status
