@@ -44,7 +44,17 @@ public final class RepaintScrollDetector {
     private long[] mHashes = new long[0];
     private boolean[] mBlank = new boolean[0];
 
-    private int mTop, mBottom;
+    private int mTop, mBottom, mLeft, mRight;
+    private int mFoundShift, mFoundScore;
+    /** The screen's rows during {@link #detect}. */
+    private TerminalRow[] mLines = new TerminalRow[0];
+    private long[] mWholeHashes = new long[0], mPreviousWholeHashes = new long[0];
+    private boolean[] mWholeBlank = new boolean[0], mPreviousWholeBlank = new boolean[0];
+
+    /** The widest column at a band's left that may hold still while the rest moves (line numbers). */
+    static final int MAX_GUTTER_COLUMNS = 16;
+    /** The narrowest band of columns looked in. */
+    static final int MIN_BAND_COLUMNS = 8;
 
     public RepaintScrollDetector() {
         this(DEFAULT_MAX_SHIFT_ROWS);
@@ -76,12 +86,17 @@ public final class RepaintScrollDetector {
             mPreviousBlank = new boolean[rows];
             mHashes = new long[rows];
             mBlank = new boolean[rows];
+            mLines = new TerminalRow[rows];
+            mWholeHashes = new long[rows];
+            mWholeBlank = new boolean[rows];
+            mPreviousWholeHashes = new long[rows];
+            mPreviousWholeBlank = new boolean[rows];
         }
         for (int row = 0; row < rows; row++) {
             TerminalRow line = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
             mPreviousRows[row].copyFrom(line);
-            mPreviousHashes[row] = hash(line, columns);
-            mPreviousBlank[row] = isBlank(line);
+            mPreviousHashes[row] = mPreviousWholeHashes[row] = hash(line, columns);
+            mPreviousBlank[row] = mPreviousWholeBlank[row] = isBlank(line);
         }
         mScreen = screen;
         mHasSnapshot = true;
@@ -106,19 +121,78 @@ public final class RepaintScrollDetector {
         if (!mHasSnapshot || direction == 0 || screen != mScreen
             || screen.mScreenRows != mRows || screen.mColumns != mColumns) return 0;
 
-        final int rows = mRows;
+        final int rows = mRows, columns = mColumns;
         final int sign = direction > 0 ? 1 : -1;
+        for (int row = 0; row < rows; row++) mLines[row] = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
+
+        // Whole rows first: the common case, and the only one before column bands were looked for.
+        mFoundScore = 0;
+        if (detectBand(sign, 0, columns, false)) return finish(sign, 0, columns);
+
+        // Then each tmux pane between vertical borders, with and without a column at its left
+        // that held still while the text beside it moved (nvim's relative line numbers, its sign
+        // column, a tmux pane's own border). The band that explains the most rows wins, the
+        // widest on a tie.
+        int bandsLeft = 0;
+        int bestLeft = -1, bestRight = -1;
+        int bestScore = 0, bestShift = 0, bestTop = 0, bestBottom = 0;
+        for (int column = 0; column <= columns; column++) {
+            if (column < columns && !isBorderColumn(column)) continue;
+            final int bandLeft = bandsLeft, bandRight = column;
+            bandsLeft = column + 1;
+            if (bandRight - bandLeft < MIN_BAND_COLUMNS) continue;
+            final int maxGutter = Math.min(MAX_GUTTER_COLUMNS, bandRight - bandLeft - MIN_BAND_COLUMNS);
+            for (int gutter = 0; gutter <= maxGutter; gutter++) {
+                if (bandLeft == 0 && bandRight == columns && gutter == 0) continue; // tried above
+                mFoundScore = 0;
+                if (detectBand(sign, bandLeft + gutter, bandRight, true) && mFoundScore > bestScore) {
+                    bestScore = mFoundScore;
+                    bestShift = mFoundShift;
+                    bestTop = mTop;
+                    bestBottom = mBottom;
+                    bestLeft = bandLeft + gutter;
+                    bestRight = bandRight;
+                }
+            }
+        }
+        if (bestScore == 0) return 0;
+        mFoundShift = bestShift;
+        mTop = bestTop;
+        mBottom = bestBottom;
+        return finish(sign, bestLeft, bestRight);
+    }
+
+    private int finish(int sign, int left, int right) {
+        mLeft = left;
+        mRight = right;
+        return sign * mFoundShift;
+    }
+
+    /**
+     * Look for a shift inside the columns [left, right). On success sets {@link #mFoundShift},
+     * {@link #mFoundScore} (rows explained), {@link #mTop} and {@link #mBottom}.
+     */
+    private boolean detectBand(int sign, int left, int right, boolean band) {
+        final int rows = mRows;
         final long[] hashes = mHashes, previousHashes = mPreviousHashes;
         final boolean[] blank = mBlank, previousBlank = mPreviousBlank;
 
         int changed = 0;
         for (int row = 0; row < rows; row++) {
-            TerminalRow line = screen.allocateFullLineIfNecessary(screen.externalToInternalRow(row));
-            hashes[row] = hash(line, mColumns);
-            blank[row] = isBlank(line);
+            if (band) {
+                hashes[row] = hash(mLines[row], left, right);
+                blank[row] = isBlank(mLines[row], left, right);
+                previousHashes[row] = hash(mPreviousRows[row], left, right);
+                previousBlank[row] = isBlank(mPreviousRows[row], left, right);
+            } else {
+                hashes[row] = mWholeHashes[row] = hash(mLines[row], mColumns);
+                blank[row] = mWholeBlank[row] = isBlank(mLines[row]);
+                previousHashes[row] = mPreviousWholeHashes[row];
+                previousBlank[row] = mPreviousWholeBlank[row];
+            }
             if (isEvidence(row)) changed++;
         }
-        if (changed < MIN_MATCHING_ROWS) return 0;
+        if (changed < MIN_MATCHING_ROWS) return false;
 
         int bestShift = 0, bestMatches = 0;
         final int maxShift = Math.min(mMaxShiftRows, rows - 2);
@@ -135,9 +209,9 @@ public final class RepaintScrollDetector {
                 bestShift = shift;
             }
         }
-        if (bestMatches < MIN_MATCHING_ROWS) return 0;
+        if (bestMatches < MIN_MATCHING_ROWS) return false;
         // The rows the shift brings in are new, so they are allowed to be unexplained.
-        if (changed - bestMatches > bestMatches + bestShift) return 0;
+        if (changed - bestMatches > bestMatches + bestShift) return false;
 
         int top = rows, bottom = 0;
         for (int row = 0; row < rows; row++) {
@@ -160,11 +234,41 @@ public final class RepaintScrollDetector {
             }
         }
         if (bottom == rows && rows > 2) bottom--;
-        if (bottom - top <= bestShift) return 0;
+        if (bottom - top <= bestShift) return false;
 
         mTop = top;
         mBottom = bottom;
-        return sign * bestShift;
+        mFoundShift = bestShift;
+        mFoundScore = bestMatches;
+        return true;
+    }
+
+    /** A column holding a tmux pane border (a vertical line) on most rows, now and in the snapshot. */
+    private boolean isBorderColumn(int column) {
+        int count = 0;
+        for (int row = 0; row < mRows; row++) {
+            if (isVerticalLine(charAt(mLines[row], column)) && isVerticalLine(charAt(mPreviousRows[row], column))) count++;
+        }
+        return count * 4 >= mRows * 3;
+    }
+
+    private static boolean isVerticalLine(char c) {
+        return c == '\u2502' || c == '\u2503' || c == '|' || c == '\u2551';
+    }
+
+    private static char charAt(TerminalRow line, int column) {
+        final int index = line.findStartOfColumn(column);
+        return index < line.getSpaceUsed() ? line.mText[index] : ' ';
+    }
+
+    /** The first column of the last scroll found. */
+    public int getLeft() {
+        return mLeft;
+    }
+
+    /** The column after the last column of the last scroll found. */
+    public int getRight() {
+        return mRight;
     }
 
     /** The first row of the last scroll found. */
@@ -195,6 +299,25 @@ public final class RepaintScrollDetector {
         final long[] style = line.mStyle;
         for (int i = 0; i < columns; i++) hash = hash * 1_000_003 + style[i];
         return hash;
+    }
+
+    static long hash(TerminalRow line, int left, int right) {
+        long hash = 17;
+        final char[] text = line.mText;
+        final int start = line.findStartOfColumn(left);
+        final int end = right >= line.mStyle.length ? line.getSpaceUsed() : line.findStartOfColumn(right);
+        for (int i = start; i < end; i++) hash = hash * 31 + text[i];
+        final long[] style = line.mStyle;
+        for (int i = left; i < right; i++) hash = hash * 1_000_003 + style[i];
+        return hash;
+    }
+
+    static boolean isBlank(TerminalRow line, int left, int right) {
+        final char[] text = line.mText;
+        final int start = line.findStartOfColumn(left);
+        final int end = right >= line.mStyle.length ? line.getSpaceUsed() : line.findStartOfColumn(right);
+        for (int i = start; i < end; i++) if (text[i] != ' ') return false;
+        return true;
     }
 
     static boolean isBlank(TerminalRow line) {

@@ -706,7 +706,7 @@ public final class TerminalView extends View {
                 final int rows = mRepaintScrollDetector.detect(mEmulator.getScreen(), mAppScrollDirection);
                 if (rows != 0) {
                     mRegionScrollAnimation.onRegionRepainted(mEmulator.getScreen(), mRepaintScrollDetector.getSnapshotRows(),
-                        rows, mRepaintScrollDetector.getTop(), mRepaintScrollDetector.getBottom(), 0, mEmulator.mColumns);
+                        rows, mRepaintScrollDetector.getTop(), mRepaintScrollDetector.getBottom(), mRepaintScrollDetector.getLeft(), mRepaintScrollDetector.getRight());
                     if (mRegionScrollAnimation.isActive()) scheduleScrollAnimationFrame();
                 }
             }
